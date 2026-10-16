@@ -1,0 +1,34 @@
+Diameter HA Gateway {{ .Chart.AppVersion }} deployed as release {{ .Release.Name }}.
+
+Chart:     {{ include "diameter-ha-gateway.chart" . }}
+Namespace: {{ .Release.Namespace }}
+Replicas:  {{ if .Values.autoscaling.enabled }}autoscaled {{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }}{{ else }}{{ .Values.replicaCount }}{{ end }}
+
+Endpoints (Service {{ include "diameter-ha-gateway.fullname" . }}):
+  - Diameter : {{ .Values.service.diameterPort }}/{{ .Values.service.diameterProtocol }}  (origin-host {{ .Values.config.server.origin_host }})
+  - Admin    : {{ if .Values.service.exposeAdmin }}{{ .Values.service.adminPort }}/TCP exposed{{ else }}NOT exposed on Service (port-forward){{ end }}  (auth: {{ .Values.config.admin.auth.enabled }})
+  - Metrics  : {{ .Values.service.metricsPort }}/TCP  {{ .Values.probes.path }}
+
+Day-2:
+  - Config change  → re-apply values; the config checksum rolls pods automatically.
+  - Force restart  → set a new opsTrigger.restart token (flushes in-memory caches).
+  - Watch rollout  → kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "diameter-ha-gateway.fullname" . }}
+
+{{- if eq .Values.config.app_env "prod" }}
+{{- if not .Values.config.admin.auth.enabled }}
+
+WARNING: app_env=prod but config.admin.auth.enabled=false — the gateway refuses
+         to start in production without admin auth. Set config.admin.auth.enabled=true.
+{{- end }}
+{{- end }}
+{{- if and .Values.config.server.tls.enabled (not .Values.tls.existingSecret) }}
+
+WARNING: config.server.tls.enabled=true but tls.existingSecret is empty — no cert
+         material is mounted. Provision a Secret and set tls.existingSecret.
+{{- end }}
+{{- if and .Values.service.exposeAdmin (not .Values.config.admin.auth.enabled) }}
+
+WARNING: service.exposeAdmin=true but config.admin.auth.enabled=false — the admin
+         API is reachable on the Service WITHOUT authentication. Enable admin auth
+         (config.admin.auth.enabled=true) or set service.exposeAdmin=false.
+{{- end }}

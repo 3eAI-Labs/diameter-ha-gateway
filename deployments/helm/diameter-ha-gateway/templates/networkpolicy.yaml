@@ -1,0 +1,40 @@
+{{- if .Values.networkPolicy.enabled -}}
+{{- if not .Values.networkPolicy.diameterAllowedCIDRs -}}
+{{- fail "networkPolicy.enabled=true requires networkPolicy.diameterAllowedCIDRs to be non-empty. An empty `from` selector fails OPEN (allows all sources) — set your trusted peer CIDRs, or disable the NetworkPolicy." -}}
+{{- end -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "diameter-ha-gateway.fullname" . }}
+  labels:
+    {{- include "diameter-ha-gateway.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "diameter-ha-gateway.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Diameter port — restricted to trusted peer CIDRs (guaranteed non-empty above,
+    # so this never degrades to an allow-all `from`).
+    - from:
+        {{- range .Values.networkPolicy.diameterAllowedCIDRs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - port: diameter
+          protocol: {{ .Values.service.diameterProtocol }}
+    # Metrics scraping. When metricsAllowedCIDRs is set, restrict to it; otherwise
+    # allow in-cluster scraping (Prometheus). Set CIDRs to tighten.
+    - {{- if .Values.networkPolicy.metricsAllowedCIDRs }}
+      from:
+        {{- range .Values.networkPolicy.metricsAllowedCIDRs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      ports:
+        - port: metrics
+          protocol: TCP
+{{- end }}

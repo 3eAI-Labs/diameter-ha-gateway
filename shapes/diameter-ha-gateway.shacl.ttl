@@ -1,0 +1,125 @@
+@prefix diam: <https://registry.3eai-labs.com/ontology/diameter-ha-gateway#> .
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+#################################################################
+# diameter-ha-gateway SHACL shape bundle
+#
+# Consumed by Arinna's per-product SHACL gate (Contract §6).
+# Uploaded to TMF at onboarding as ProductSpecification characteristic
+# `arinna.shapes.shacl` (valueType text/turtle), inline.
+#
+# Two shape families:
+#   (A) Deployment-config safety — mirror the production boot guard in
+#       cmd/diameter-gateway/main.go and the documented prod invariants,
+#       so Arinna refuses to PUSH a Helm-values change that would crash
+#       the pod or open a security hole, BEFORE the change is applied.
+#   (B) Write-class action safety — tenant scoping and high-blast-radius
+#       co-sign (Arinna INV·01), for actions that mutate product state.
+#
+# Encoding: SHACL-core only (portable across reasoners). Conditional
+# guards use the standard implication idiom  sh:or ( [not antecedent]
+# [consequent] ).  "production-like" = appEnv ∈ {prod,stage,staging,
+# production} to match config.go IsProduction(). Vocabulary:
+# shapes/diameter-ha-gateway-ontology.ttl.
+#################################################################
+
+########################  (A) Deployment-config safety  ########################
+
+# production-like ⇒ admin auth ON  (HARD boot guard — cmd/diameter-gateway/main.go refuses start,
+# exit 2, when IsProduction() && !Admin.Auth.Enabled).
+diam:ProdAdminAuthShape a sh:NodeShape ;
+    sh:targetClass diam:Deployment ;
+    sh:message "When appEnv is production-like (prod/stage), adminAuthEnabled MUST be true — the gateway refuses to start otherwise (cmd/diameter-gateway/main.go, TIER-1 #21)." ;
+    sh:severity sh:Violation ;
+    sh:or (
+        [ sh:not [ sh:property [ sh:path diam:appEnv ; sh:in ( "prod" "stage" "staging" "production" ) ] ] ]
+        [ sh:property [ sh:path diam:adminAuthEnabled ; sh:hasValue true ] ]
+    ) .
+
+# production ⇒ permissive-origin-host OFF  (config.go: "MUST remain false in
+# production" — accepting unmatched Origin-Host defeats peer identity checks).
+diam:ProdPermissiveOriginShape a sh:NodeShape ;
+    sh:targetClass diam:Deployment ;
+    sh:message "When appEnv is production-like, permissiveOriginHost MUST be false (peer Origin-Host spoofing risk)." ;
+    sh:severity sh:Violation ;
+    sh:or (
+        [ sh:not [ sh:property [ sh:path diam:appEnv ; sh:in ( "prod" "stage" "staging" "production" ) ] ] ]
+        [ sh:property [ sh:path diam:permissiveOriginHost ; sh:hasValue false ] ]
+    ) .
+
+# production ⇒ Diameter TLS ON  (config header: "Production overrides should
+# enable Diameter TLS". Recommended, not code-enforced → Warning, not Violation.)
+diam:ProdDiameterTlsShape a sh:NodeShape ;
+    sh:targetClass diam:Deployment ;
+    sh:message "When appEnv is production-like, diameterTlsEnabled should be true (RFC 6733 §13.1 — transport confidentiality)." ;
+    sh:severity sh:Warning ;
+    sh:or (
+        [ sh:not [ sh:property [ sh:path diam:appEnv ; sh:in ( "prod" "stage" "staging" "production" ) ] ] ]
+        [ sh:property [ sh:path diam:diameterTlsEnabled ; sh:hasValue true ] ]
+    ) .
+
+# Diameter TLS ON ⇒ a TLS Secret is referenced  (chart coherence — without
+# tls.existingSecret no cert material is mounted, so TLS cannot come up).
+diam:TlsSecretCoherenceShape a sh:NodeShape ;
+    sh:targetClass diam:Deployment ;
+    sh:message "diameterTlsEnabled=true requires a non-empty tlsExistingSecret (otherwise no cert material is mounted)." ;
+    sh:severity sh:Violation ;
+    sh:or (
+        [ sh:not [ sh:property [ sh:path diam:diameterTlsEnabled ; sh:hasValue true ] ] ]
+        [ sh:property [ sh:path diam:tlsExistingSecret ; sh:minCount 1 ; sh:minLength 1 ] ]
+    ) .
+
+# admin API exposed on the Service ⇒ admin auth ON  (do not publish an
+# unauthenticated admin API; mirrors chart NOTES + security-review finding).
+diam:ExposeAdminAuthShape a sh:NodeShape ;
+    sh:targetClass diam:Deployment ;
+    sh:message "exposeAdmin=true requires adminAuthEnabled=true — never publish an unauthenticated admin API on the Service." ;
+    sh:severity sh:Violation ;
+    sh:or (
+        [ sh:not [ sh:property [ sh:path diam:exposeAdmin ; sh:hasValue true ] ] ]
+        [ sh:property [ sh:path diam:adminAuthEnabled ; sh:hasValue true ] ]
+    ) .
+
+# Chart/image registry allowlist  (Contract §8.1 / ARIN-ONB-0014).
+diam:RegistryAllowlistShape a sh:NodeShape ;
+    sh:targetClass diam:Deployment ;
+    sh:property [
+        sh:path diam:imageRepository ;
+        sh:not [ sh:pattern "^(https?://|127\\.|10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|localhost)" ] ;
+        sh:severity sh:Violation ;
+        sh:message "imageRepository must be on an allowlisted registry — no http(s):// scheme, RFC-1918 private IP, or localhost (ARIN-ONB-0014)."
+    ] .
+
+# production ⇒ at least 2 replicas  (HA floor — a single-replica prod deploy
+# defeats the gateway's HA purpose. Advisory: operators may knowingly run 1.)
+diam:ProdReplicaFloorShape a sh:NodeShape ;
+    sh:targetClass diam:Deployment ;
+    sh:message "When appEnv is production-like, replicaCount should be >= 2 (HA floor; single replica has no failover headroom)." ;
+    sh:severity sh:Warning ;
+    sh:or (
+        [ sh:not [ sh:property [ sh:path diam:appEnv ; sh:in ( "prod" "stage" "staging" "production" ) ] ] ]
+        [ sh:property [ sh:path diam:replicaCount ; sh:minInclusive 2 ] ]
+    ) .
+
+########################  (B) Write-class action safety  ########################
+
+# Every Peer MUST carry a tenant  (cross-tenant isolation).
+diam:PeerTenantShape a sh:NodeShape ;
+    sh:targetClass diam:Peer ;
+    sh:property [
+        sh:path diam:tenantId ;
+        sh:minCount 1 ;
+        sh:severity sh:Violation ;
+        sh:message "Every Peer MUST carry a tenantId (multi-tenant isolation)."
+    ] .
+
+# High-blast-radius action ⇒ dual-operator co-sign  (Arinna INV·01).
+diam:HighBlastRadiusShape a sh:NodeShape ;
+    sh:targetClass diam:OpsAction ;
+    sh:message "An OpsAction with blastRadius > 100 requires dualApprovalGranted=true (dual-operator co-sign, INV·01)." ;
+    sh:severity sh:Violation ;
+    sh:or (
+        [ sh:not [ sh:property [ sh:path diam:blastRadius ; sh:minExclusive 100 ] ] ]
+        [ sh:property [ sh:path diam:dualApprovalGranted ; sh:hasValue true ] ]
+    ) .

@@ -1,0 +1,93 @@
+@prefix diam: <https://registry.3eai-labs.com/ontology/diameter-ha-gateway#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+#################################################################
+# diameter-ha-gateway ontology
+#
+# Vocabulary for the Diameter HA Gateway, consumed by Arinna's
+# SHACL reasoner alongside diameter-ha-gateway.shacl.ttl.
+#
+# Design intent: the vocabulary mirrors the Arinna-addressable Helm
+# values surface (deployments/helm/diameter-ha-gateway/values.schema.json
+# `x-arinna` fields) plus the write-class domain objects Arinna may
+# mutate (Peer, OpsAction). Shapes over these terms let Arinna validate
+# a *proposed* values change or action BEFORE apply, so an unsafe change
+# is refused symbolically instead of CrashLooping the pod (cmd/diameter-gateway/main.go
+# boot guard), exposing an unauthenticated admin API, or fanning a
+# high-blast-radius action out without a co-sign.
+#
+# Authority: Product Packaging Contract v2.0 §6.
+#################################################################
+
+diam: a owl:Ontology ;
+    rdfs:label "diameter-ha-gateway ontology" ;
+    rdfs:comment "Symbolic vocabulary for Diameter HA Gateway config- and write-class safety (Arinna SHACL gate)." ;
+    owl:versionInfo "1.0.0" .
+
+########################  Classes  ########################
+
+diam:Deployment a rdfs:Class, owl:Class ;
+    rdfs:label "Diameter Gateway Deployment" ;
+    rdfs:comment "A proposed or applied gateway configuration; properties mirror the Arinna-addressable Helm values." .
+
+diam:Peer a rdfs:Class, owl:Class ;
+    rdfs:label "Diameter Peer" ;
+    rdfs:comment "An accepted Diameter client (MME/PGW/PCRF/OCS). Tenant-scoped; write-class edits are SHACL-gated." .
+
+diam:OpsAction a rdfs:Class, owl:Class ;
+    rdfs:label "Operational Action" ;
+    rdfs:comment "A day-2 write-class action Arinna may request (e.g. rolling restart, peer-reset)." .
+
+########################  Enumerations  ########################
+
+diam:AppEnv a rdfs:Class ; rdfs:label "Application environment" .
+diam:Dev   a diam:AppEnv ; rdfs:label "dev" .
+diam:Stage a diam:AppEnv ; rdfs:label "stage" .
+diam:Prod  a diam:AppEnv ; rdfs:label "prod" .
+
+########################  Deployment properties  ########################
+# (mirror config.* + infra knobs in values.schema.json)
+
+diam:appEnv a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:string ;
+    rdfs:comment "Boot mode: dev | stage | prod. stage/prod are production-like (config.go IsProduction())." .
+diam:adminEnabled a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:boolean .
+diam:adminAuthEnabled a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:boolean ;
+    rdfs:comment "Admin API JWT auth. MUST be true when appEnv is production-like (cmd/diameter-gateway/main.go boot guard)." .
+diam:exposeAdmin a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:boolean ;
+    rdfs:comment "Whether the admin API is published on the Service (service.exposeAdmin)." .
+diam:permissiveOriginHost a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:boolean ;
+    rdfs:comment "Accept unmatched Origin-Host. MUST be false in production (config.go comment)." .
+diam:diameterTlsEnabled a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:boolean ;
+    rdfs:comment "Diameter transport TLS (RFC 6733 §13.1)." .
+diam:natsTlsEnabled a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:boolean .
+diam:tlsExistingSecret a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:string ;
+    rdfs:comment "Name of the pre-provisioned TLS Secret; required when diameterTlsEnabled=true." .
+diam:network a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:string ;
+    rdfs:comment "Diameter transport: tcp|tcp4|tcp6|sctp|sctp4|sctp6." .
+diam:originHost a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:string .
+diam:originRealm a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:string .
+diam:natsUrl a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:string .
+diam:imageRepository a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:string ;
+    rdfs:comment "Container image repository; must be on an allowlisted registry (Contract §8.1)." .
+diam:replicaCount a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:integer .
+
+########################  Peer / Action properties  ########################
+
+diam:tenantId a rdf:Property ;
+    rdfs:comment "Owning tenant; every write-class object MUST carry one (cross-tenant isolation)." .
+diam:peerIp a rdf:Property ; rdfs:domain diam:Peer ; rdfs:range xsd:string ;
+    rdfs:comment "Peer IP or CIDR." .
+diam:rateLimitTps a rdf:Property ; rdfs:domain diam:Peer ; rdfs:range xsd:integer ;
+    rdfs:comment "Per-peer forward-request cap (0 = unbounded)." .
+
+diam:actionType a rdf:Property ; rdfs:domain diam:OpsAction ;
+    rdfs:comment "e.g. rolling-restart, peer-reset, peer-drop." .
+diam:blastRadius a rdf:Property ; rdfs:domain diam:OpsAction ; rdfs:range xsd:integer ;
+    rdfs:comment "Estimated affected scope (e.g. number of peers/sessions reset)." .
+diam:dualApprovalGranted a rdf:Property ; rdfs:domain diam:OpsAction ; rdfs:range xsd:boolean ;
+    rdfs:comment "Whether a second operator co-signed (Arinna INV·01)." .
+diam:arinnaConfidence a rdf:Property ; rdfs:domain diam:OpsAction ; rdfs:range xsd:decimal ;
+    rdfs:comment "Calibrated agent confidence 0..1 (Arinna INV·02)." .

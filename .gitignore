@@ -1,0 +1,51 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+# Anchored to repo root so the binary `./diameter-gateway` is ignored but the
+# `cmd/diameter-gateway/` source directory is NOT (the unanchored pattern
+# matched both, leaving cmd/diameter-gateway/main.go silently untracked).
+/diameter-gateway
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories
+vendor/
+/bin/
+
+# Go workspace file
+go.work
+
+# React / Frontend
+web/node_modules
+web/dist
+web/.env
+web/npm-debug.log*
+web/yarn-debug.log*
+web/yarn-error.log*
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git worktrees
+.worktrees/
+
+# Configs (Keep template, ignore local)
+# configs/config.yaml (Optional: can ignore if it contains secrets)
+
+# Conformance suite reports (regenerated each run)
+tests/conformance/seagull/reports/*
+!tests/conformance/seagull/reports/.gitkeep

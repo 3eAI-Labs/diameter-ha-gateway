@@ -1,0 +1,47 @@
+apiVersion: v2
+name: diameter-ha-gateway
+description: >-
+  Diameter gateway that terminates 4G/LTE Diameter interfaces (S6a, S13, Gx,
+  Gy, Ro, SGd) and hands each request to an application over NATS. Keeps no
+  subscriber state; replicas share the load through NATS queue groups.
+  Arinna-onboardable per the Product Packaging Contract v2.0 (chart-only intake).
+type: application
+
+# Chart version — bump independently of the application (SemVer). Breaking
+# values.schema.json changes require a MAJOR bump (Contract §2, §4.7).
+version: 0.2.0
+
+# Application version — the diameter-gateway binary this chart deploys. Releases
+# go to ghcr.io/3eai-labs/diameter-ha-gateway:<appVersion>; 0.9.4 was published
+# to registry.3eai-labs.com only.
+appVersion: "0.10.0"
+
+keywords:
+  - diameter
+  - telecom
+  - gateway
+  - 4g
+  - lte
+  - s6a
+  - s13
+  - gx
+  - gy
+  - ro
+  - sgd
+  - nats
+  - hss
+  - ocs
+  - pcrf
+home: https://www.3eai-labs.com
+sources:
+  - https://github.com/3eAI-Labs/diameter-ha-gateway
+maintainers:
+  - name: 3eAI Labs — Telco
+    url: https://github.com/3eAI-Labs
+
+# Arinna packaging metadata (informational; the binding surface is
+# values.schema.json + x-arinna).
+annotations:
+  arinna.3eai-labs.com/packaging-contract: "v2.0"
+  arinna.3eai-labs.com/intake: "chart-only"
+  arinna.3eai-labs.com/day2-model: "rolling-restart"

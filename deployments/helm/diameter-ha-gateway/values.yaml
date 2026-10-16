@@ -1,0 +1,231 @@
+# Default values for diameter-ha-gateway.
+# The `config:` block is rendered verbatim into /app/configs/config.yaml
+# (the file viper loads at startup). Every knob here is typed + constrained in
+# values.schema.json; the operator-tunable subset carries x-arinna metadata
+# (Arinna's exposure boundary — Contract §2.1).
+
+# -- Number of gateway replicas (stateless; scaled via NATS queue groups). --
+replicaCount: 3
+
+image:
+  # MUST be an allowlisted registry (Contract §8.1 — oci:// or https://, no private IP).
+  repository: ghcr.io/3eai-labs/diameter-ha-gateway
+  pullPolicy: IfNotPresent
+  # Overrides the image tag; defaults to the chart appVersion when empty.
+  tag: ""
+
+# Pull secret for a private registry. When Arinna deploys, the platform wires
+# authentication via spec.helmChart.pullSecretRef (Contract §8.2) — this list is
+# for standalone (non-Arinna) installs only.
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  # Hardened defaults. Root FS is read-only (a writable /tmp emptyDir is mounted);
+  # all capabilities dropped. Normal SCTP/TCP data-plane sockets do NOT need
+  # NET_ADMIN — only add a capability here if your kernel/CNI provably requires it.
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+# GOLD/SILVER/BRONZE service-level presets set these (serviceLevelPreset: true).
+# Defaults below mirror deployments/k8s-deployment.yaml.
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+autoscaling:
+  enabled: false
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+# Pod Disruption Budget — protect HA during voluntary disruptions.
+pdb:
+  enabled: true
+  minAvailable: 2
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+service:
+  type: ClusterIP
+  # Diameter base protocol port (RFC 6733 §2.1 default 3868).
+  diameterPort: 3868
+  # Transport for the Diameter port. Keep in sync with config.server.network.
+  diameterProtocol: SCTP
+  adminPort: 8081
+  metricsPort: 8080
+  # Expose the admin API / web UI (adminPort) on the Service. Default OFF:
+  # the admin API ships unauthenticated (config.admin.auth.enabled=false) in
+  # dev, so it is NOT cluster-reachable unless you opt in AND enable auth.
+  # Reach it via `kubectl port-forward` when disabled. Arinna does not use it.
+  exposeAdmin: false
+
+# Container probes hit the Prometheus metrics endpoint (the only always-on HTTP
+# surface; admin API may be disabled). Port name must match the metrics port.
+probes:
+  path: /metrics
+  portName: metrics
+  liveness:
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# Prometheus ServiceMonitor (requires the Prometheus Operator CRD).
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  path: /metrics
+
+# NetworkPolicy restricting ingress. When enabled, diameterAllowedCIDRs MUST be
+# non-empty — an empty peer list would fail OPEN, so the chart refuses to render.
+networkPolicy:
+  enabled: false
+  # CIDRs permitted to reach the Diameter port (your MME/PGW/PCRF/OCS peers).
+  # Required (non-empty) when networkPolicy.enabled=true.
+  diameterAllowedCIDRs: []
+  # CIDRs permitted to scrape metrics. Empty ⇒ allow in-cluster scraping.
+  metricsAllowedCIDRs: []
+
+# Diameter TLS material (RFC 6733 §13.1). When enabled, a Secret
+# holding cert/key (and optional client CA for mTLS) is mounted read-only at
+# tls.mountPath and config.server.tls.*_file are pointed at it automatically.
+# Secret contents are NEVER inlined in values (secretRefOnly — Contract §2.1).
+tls:
+  # Name of a pre-provisioned kubernetes.io/tls (or opaque) Secret. Required
+  # when config.server.tls.enabled=true.
+  existingSecret: ""
+  mountPath: /etc/diameter/tls
+  certKey: tls.crt
+  keyKey: tls.key
+  clientCaKey: ca.crt
+
+# Declarative day-2 rolling-restart trigger (Contract §5 pattern, chart-native
+# variant). Change this token to force a rolling restart of all replicas —
+# e.g. to flush in-memory session/redirect caches. The restart is observable
+# via standard Deployment rollout Events (k8s-mcp), since this stateless
+# product ships no operator to emit OpsTriggerCompleted. See PACKAGING_CONFORMANCE.md.
+opsTrigger:
+  restart: ""
+
+# ---------------------------------------------------------------------------
+# config: rendered verbatim into config.yaml (see internal/config/config.go).
+# ---------------------------------------------------------------------------
+config:
+  # dev | stage | prod — gates auth/security defaults. prod refuses to start
+  # with admin auth disabled or Diameter TLS off in some deployments.
+  app_env: dev
+
+  server:
+    listen_addr: "0.0.0.0:3868"
+    secondary_addr: "127.0.0.1"
+    network: sctp # tcp | tcp4 | tcp6 | sctp | sctp4 | sctp6
+    origin_host: "gateway.mnc001.mcc286.3gppnetwork.org"
+    origin_realm: "mnc001.mcc286.3gppnetwork.org"
+    product_name: "Diameter-HA-Gateway"
+    max_connections: 100
+    reverse_timeout: "5s"
+    mme_dest_realm: ""
+    watchdog_interval: "30s"
+    watchdog_timeout: "90s"
+    idle_peer_timeout: "5m"
+    tls:
+      enabled: false
+      cert_file: ""
+      key_file: ""
+      client_ca: ""
+    permissive_origin_host: false
+    redirect_default_ttl: "60s"
+    redirect_max_depth: 3
+    redirect_cache_capacity: 10000
+    redirect_idr_retry_enabled: false
+    redirect_asr_retry_enabled: false
+
+  admin:
+    port: 8081
+    enabled: true
+    auth:
+      enabled: false # mandatory in prod
+      jwks_url: "http://keycloak:8080/realms/telco/protocol/openid-connect/certs"
+      # Expected iss and aud claims; both required when enabled.
+      issuer: ""
+      audience: ""
+
+  nats:
+    url: "nats://nats.infra.svc.cluster.local:4222"
+    connect_timeout: "5s"
+    request_timeout: "2s"
+    tls:
+      enabled: false
+    circuit_breaker:
+      name: "diameter-gateway-nats"
+      max_requests: 5
+      interval: "10s"
+      timeout: "30s"
+      failure_ratio: 0.5
+      min_requests: 10
+
+  # Diameter peers (MME/PGW/PCRF/OCS). Add/remove entries and re-apply to
+  # reconfigure the accepted client set.
+  peers:
+    - ip: "127.0.0.1"
+      name: "mme-sim"
+      realm: "epc.mnc001.mcc286.3gppnetwork.org"
+      allowed_origins: []
+      rate_limit_tps: 0
+
+  # SGd interface (TS 29.338) — SMS over Diameter.
+  sgd:
+    enabled: true
+    request_timeout: "2s"
+
+  # Charging interfaces (Gx/Gy/Ro) — share Cmd-Code 272 / App-Id 4;
+  # Service-Context-Id discriminates the downstream NATS topic.
+  charging:
+    enabled: true
+    request_timeout: "2s"
+    gx_context_ids:
+      - "pcrf@3gpp.org"
+    gy_context_ids:
+      - "ocs.diameter@3gpp.org"
+    ro_context_ids:
+      - "ims-charging@3gpp.org"
+    gx:
+      # Session-Id → PCEF binding eviction. Preset shortcuts:
+      # iot | smartphone | mixed | strict. Explicit durations override preset.
+      session_eviction:
+        preset: "mixed"
+        min_lifetime: ""
+        idle_timeout: ""
+        absolute_lifetime: ""

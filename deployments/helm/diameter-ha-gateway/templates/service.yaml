@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "diameter-ha-gateway.fullname" . }}
+  labels:
+    {{- include "diameter-ha-gateway.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "diameter-ha-gateway.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: diameter
+      port: {{ .Values.service.diameterPort }}
+      targetPort: diameter
+      protocol: {{ .Values.service.diameterProtocol }}
+    {{- if .Values.service.exposeAdmin }}
+    - name: admin
+      port: {{ .Values.service.adminPort }}
+      targetPort: admin
+      protocol: TCP
+    {{- end }}
+    - name: metrics
+      port: {{ .Values.service.metricsPort }}
+      targetPort: metrics
+      protocol: TCP

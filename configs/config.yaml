@@ -1,0 +1,102 @@
+# Diameter HA Gateway — development configuration.
+# Production overrides should set app_env=prod and enable admin auth + Diameter TLS.
+
+app_env: "dev" # dev | stage | prod  -- gates auth/security defaults
+
+server:
+  listen_addr: "0.0.0.0:3868"
+  secondary_addr: "127.0.0.1"
+  network: "sctp" # tcp, tcp4, tcp6, sctp, sctp4, sctp6
+  origin_host: "gateway.mnc001.mcc286.3gppnetwork.org"
+  origin_realm: "mnc001.mcc286.3gppnetwork.org"
+  product_name: "Diameter-HA-Gateway"
+  max_connections: 100
+
+  # Reverse path (HSS-initiated CLR/IDR/...) timeout.
+  reverse_timeout: "5s"
+
+  # Default Origin-Realm used when constructing reverse Diameter requests and
+  # the NATS event lacks header.dest_realm. Falls back to origin_realm if empty.
+  mme_dest_realm: ""
+
+  # Explicit DWR/DWA watchdog.
+  watchdog_interval: "30s"
+  watchdog_timeout: "90s"
+
+  # Idle peer GC — force-close peers that haven't sent any APPLICATION
+  # traffic (forward request, NOT DWA) within the window. Catches zombie
+  # peers whose app-layer is hung but DWR/DWA still flows. "0" disables.
+  idle_peer_timeout: "5m"
+
+  # Diameter TLS — RFC 6733 §13.1.
+  tls:
+    enabled: false
+    cert_file: ""
+    key_file: ""
+    client_ca: "" # optional; mTLS when set
+
+  # Dev convenience: accept Origin-Host that doesn't strictly match cfg.Peers[].Name.
+  # MUST remain false in production.
+  permissive_origin_host: false
+
+  # Per-verb opt-in for redirect-honor retry on RetryIfOperatorOptsIn verbs.
+  # Off by default — enable only when the
+  # peer fleet treats double-application as soft success.
+  redirect_idr_retry_enabled: false # S6a IDR (HSS profile push)
+  redirect_asr_retry_enabled: false # Gx ASR (PCRF abort-session)
+
+admin:
+  port: 8081
+  enabled: true
+  auth:
+    enabled: false # mandatory in prod (refused at startup if app_env=prod and false)
+    jwks_url: "http://keycloak:8080/realms/telco/protocol/openid-connect/certs"
+    issuer: "" # expected iss claim; required when enabled
+    audience: "" # expected aud claim; required when enabled
+
+nats:
+  url: "nats://127.0.0.1:4222"
+  connect_timeout: 5s
+  request_timeout: 2s
+  tls:
+    enabled: false
+
+peers:
+  - ip: "127.0.0.1"
+    name: "mme-sim"
+    realm: "epc.mnc001.mcc286.3gppnetwork.org"
+    allowed_origins: []
+
+# SGd Interface (TS 29.338) — SMS over Diameter.
+sgd:
+  enabled: true
+  request_timeout: 2s
+
+# Charging interfaces (Gx / Gy / Ro) — share Cmd-Code 272 / App-Id 4.
+# Service-Context-Id discriminates which downstream NATS topic gets the publish.
+charging:
+  enabled: true
+  request_timeout: 2s
+  gx_context_ids:
+    - "pcrf@3gpp.org"
+  gy_context_ids:
+    - "ocs.diameter@3gpp.org"
+  ro_context_ids:
+    - "ims-charging@3gpp.org"
+
+  # Gx-specific knobs (PCRF reverse direction).
+  gx:
+    # Session-Id → PCEF binding registry; consumed by RAR/ASR routing.
+    # Preset shortcuts:
+    #   "iot"        — long-lived quiet sessions (M2M, smart meters).
+    #   "smartphone" — short to medium sessions, frequent CCR-U.
+    #   "mixed"      — heterogeneous traffic; carrier-grade default.
+    #   "strict"     — never TTL-evict; rely on Unbind/DropPeer only.
+    # Explicit duration fields override preset defaults — operators can
+    # combine e.g. preset=iot + idle_timeout=180d for IoT floor with
+    # stretched idle window.
+    session_eviction:
+      preset: "mixed"
+      # min_lifetime: "168h"      # 7d  — protect quiet long-lived sessions
+      # idle_timeout: "24h"       # idle since last CCR-I/CCR-U
+      # absolute_lifetime: "720h" # 30d — backstop for billing windows

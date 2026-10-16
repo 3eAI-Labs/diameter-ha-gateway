@@ -1,0 +1,634 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "diameter-ha-gateway Helm values",
+  "description": "Arinna-addressable surface for the Diameter HA Gateway (Product Packaging Contract v2.0). Fields carrying an x-arinna block are the operator-tunable exposure boundary (Contract §2.1); un-annotated fields keep their chart defaults and are not Arinna-tunable.",
+  "type": "object",
+  "required": ["replicaCount", "image", "config"],
+  "$defs": {
+    "goDuration": {
+      "type": "string",
+      "description": "Go duration (e.g. 30s, 5m, 1h, 720h), 0 to disable, or empty to inherit the app/preset default.",
+      "pattern": "^(0|([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+)?$"
+    },
+    "quantity": {
+      "type": "string",
+      "description": "Kubernetes resource quantity (e.g. 500m, 1, 512Mi, 1Gi).",
+      "pattern": "^[0-9]+(\\.[0-9]+)?(m|k|Ki|Mi|Gi|Ti|Pi|Ei|K|M|G|T|P|E)?$"
+    }
+  },
+  "properties": {
+    "replicaCount": {
+      "type": "integer",
+      "description": "Number of stateless gateway replicas (scaled via NATS queue groups).",
+      "minimum": 1,
+      "maximum": 64,
+      "default": 3,
+      "x-arinna": {
+        "userExposed": true,
+        "mutableAtRuntime": true,
+        "riskClass": "low",
+        "requiresApproval": false,
+        "tenantScoped": false,
+        "secretRefOnly": false,
+        "serviceLevelPreset": true
+      }
+    },
+    "image": {
+      "type": "object",
+      "required": ["repository"],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "description": "Container image repository. MUST be on an allowlisted registry (Contract §8.1).",
+          "minLength": 1,
+          "x-arinna": {
+            "userExposed": false,
+            "mutableAtRuntime": false,
+            "riskClass": "high",
+            "requiresApproval": true,
+            "serviceLevelPreset": false
+          }
+        },
+        "tag": {
+          "type": "string",
+          "description": "Image tag; empty defaults to chart appVersion. Changing it is an upgrade — re-smoke required (Contract §9.2).",
+          "x-arinna": {
+            "userExposed": false,
+            "mutableAtRuntime": false,
+            "riskClass": "high",
+            "requiresApproval": true,
+            "serviceLevelPreset": false
+          }
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"],
+          "default": "IfNotPresent"
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": { "type": "object" },
+      "description": "Standalone-install pull secrets. Under Arinna, use pullSecretRef (Contract §8.2)."
+    },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean", "default": true },
+        "annotations": { "type": "object" },
+        "name": { "type": "string" }
+      }
+    },
+    "podAnnotations": { "type": "object" },
+    "podLabels": { "type": "object" },
+    "podSecurityContext": { "type": "object" },
+    "securityContext": { "type": "object" },
+    "resources": {
+      "type": "object",
+      "description": "Container resource requests/limits. Participates in GOLD/SILVER/BRONZE sizing.",
+      "properties": {
+        "requests": {
+          "type": "object",
+          "properties": {
+            "cpu": { "$ref": "#/$defs/quantity" },
+            "memory": { "$ref": "#/$defs/quantity" }
+          },
+          "x-arinna": {
+            "userExposed": true,
+            "mutableAtRuntime": true,
+            "riskClass": "medium",
+            "serviceLevelPreset": true
+          }
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "cpu": { "$ref": "#/$defs/quantity" },
+            "memory": { "$ref": "#/$defs/quantity" }
+          },
+          "x-arinna": {
+            "userExposed": true,
+            "mutableAtRuntime": true,
+            "riskClass": "medium",
+            "serviceLevelPreset": true
+          }
+        }
+      }
+    },
+    "autoscaling": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "x-arinna": {
+            "userExposed": true,
+            "mutableAtRuntime": true,
+            "riskClass": "low",
+            "serviceLevelPreset": true
+          }
+        },
+        "minReplicas": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64,
+          "default": 3,
+          "x-arinna": {
+            "userExposed": true,
+            "mutableAtRuntime": true,
+            "riskClass": "low",
+            "serviceLevelPreset": true
+          }
+        },
+        "maxReplicas": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128,
+          "default": 10,
+          "x-arinna": {
+            "userExposed": true,
+            "mutableAtRuntime": true,
+            "riskClass": "low",
+            "serviceLevelPreset": true
+          }
+        },
+        "targetCPUUtilizationPercentage": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 70,
+          "x-arinna": {
+            "userExposed": true,
+            "mutableAtRuntime": true,
+            "riskClass": "low",
+            "serviceLevelPreset": true
+          }
+        }
+      }
+    },
+    "pdb": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "minAvailable": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 2,
+          "x-arinna": {
+            "userExposed": true,
+            "mutableAtRuntime": true,
+            "riskClass": "low",
+            "serviceLevelPreset": true
+          }
+        }
+      }
+    },
+    "nodeSelector": { "type": "object" },
+    "tolerations": { "type": "array" },
+    "affinity": { "type": "object" },
+    "service": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+          "default": "ClusterIP"
+        },
+        "diameterPort": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 3868 },
+        "diameterProtocol": { "type": "string", "enum": ["SCTP", "TCP"], "default": "SCTP" },
+        "adminPort": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 8081 },
+        "metricsPort": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 8080 },
+        "exposeAdmin": {
+          "type": "boolean",
+          "default": false,
+          "description": "Expose the unauthenticated-by-default admin API on the Service. Keep false unless config.admin.auth.enabled=true.",
+          "x-arinna": {
+            "userExposed": true,
+            "mutableAtRuntime": true,
+            "riskClass": "high",
+            "requiresApproval": true
+          }
+        }
+      }
+    },
+    "probes": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "default": "/metrics" },
+        "portName": { "type": "string", "default": "metrics" },
+        "liveness": { "type": "object" },
+        "readiness": { "type": "object" }
+      }
+    },
+    "serviceMonitor": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "interval": { "$ref": "#/$defs/goDuration" },
+        "path": { "type": "string", "default": "/metrics" }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "diameterAllowedCIDRs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "CIDRs permitted to reach the Diameter port (your peers). Required non-empty when networkPolicy.enabled=true (empty fails open).",
+          "x-arinna": {
+            "userExposed": true,
+            "mutableAtRuntime": true,
+            "riskClass": "medium",
+            "tenantScoped": true
+          }
+        },
+        "metricsAllowedCIDRs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "CIDRs permitted to scrape metrics. Empty ⇒ allow in-cluster scraping.",
+          "x-arinna": {
+            "userExposed": true,
+            "mutableAtRuntime": true,
+            "riskClass": "low",
+            "tenantScoped": false
+          }
+        }
+      }
+    },
+    "tls": {
+      "type": "object",
+      "description": "Diameter TLS material references (never inlined — secretRefOnly).",
+      "properties": {
+        "existingSecret": {
+          "type": "string",
+          "description": "Name of the pre-provisioned Secret holding cert/key/CA. Required when config.server.tls.enabled=true.",
+          "x-arinna": {
+            "userExposed": false,
+            "mutableAtRuntime": false,
+            "riskClass": "high",
+            "requiresApproval": true,
+            "secretRefOnly": true
+          }
+        },
+        "mountPath": { "type": "string", "default": "/etc/diameter/tls" },
+        "certKey": { "type": "string", "default": "tls.crt" },
+        "keyKey": { "type": "string", "default": "tls.key" },
+        "clientCaKey": { "type": "string", "default": "ca.crt" }
+      }
+    },
+    "opsTrigger": {
+      "type": "object",
+      "description": "Declarative day-2 triggers (Contract §5). Chart-native variant — outcome observable via Deployment rollout Events.",
+      "properties": {
+        "restart": {
+          "type": "string",
+          "description": "Change this token to force a rolling restart of all replicas (flush in-memory session/redirect caches). Idempotent: same token ⇒ no restart.",
+          "default": "",
+          "x-arinna": {
+            "userExposed": false,
+            "mutableAtRuntime": true,
+            "riskClass": "medium",
+            "requiresApproval": false,
+            "serviceLevelPreset": false
+          }
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "description": "Rendered verbatim into /root/configs/config.yaml.",
+      "required": ["server", "nats"],
+      "properties": {
+        "app_env": {
+          "type": "string",
+          "enum": ["dev", "stage", "prod"],
+          "default": "dev",
+          "description": "Gates auth/security defaults. prod hardens startup checks.",
+          "x-arinna": {
+            "userExposed": true,
+            "mutableAtRuntime": false,
+            "riskClass": "high",
+            "requiresApproval": true
+          }
+        },
+        "server": {
+          "type": "object",
+          "properties": {
+            "listen_addr": { "type": "string", "default": "0.0.0.0:3868" },
+            "secondary_addr": { "type": "string" },
+            "network": {
+              "type": "string",
+              "enum": ["tcp", "tcp4", "tcp6", "sctp", "sctp4", "sctp6"],
+              "default": "sctp",
+              "description": "Diameter transport. Keep service.diameterProtocol in sync.",
+              "x-arinna": {
+                "userExposed": true,
+                "mutableAtRuntime": false,
+                "riskClass": "high",
+                "requiresApproval": true
+              }
+            },
+            "origin_host": {
+              "type": "string",
+              "description": "Diameter Origin-Host (node identity, RFC 6733 §6.3).",
+              "minLength": 1,
+              "x-arinna": {
+                "userExposed": true,
+                "mutableAtRuntime": false,
+                "riskClass": "high",
+                "requiresApproval": true
+              }
+            },
+            "origin_realm": {
+              "type": "string",
+              "description": "Diameter Origin-Realm (RFC 6733 §6.4).",
+              "minLength": 1,
+              "x-arinna": {
+                "userExposed": true,
+                "mutableAtRuntime": false,
+                "riskClass": "high",
+                "requiresApproval": true
+              }
+            },
+            "product_name": { "type": "string", "default": "Diameter-HA-Gateway" },
+            "max_connections": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000,
+              "default": 100,
+              "x-arinna": {
+                "userExposed": true,
+                "mutableAtRuntime": true,
+                "riskClass": "medium",
+                "serviceLevelPreset": true
+              }
+            },
+            "reverse_timeout": {
+              "$ref": "#/$defs/goDuration",
+              "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" }
+            },
+            "mme_dest_realm": { "type": "string" },
+            "watchdog_interval": {
+              "$ref": "#/$defs/goDuration",
+              "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" }
+            },
+            "watchdog_timeout": {
+              "$ref": "#/$defs/goDuration",
+              "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" }
+            },
+            "idle_peer_timeout": {
+              "$ref": "#/$defs/goDuration",
+              "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" }
+            },
+            "tls": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false,
+                  "x-arinna": {
+                    "userExposed": true,
+                    "mutableAtRuntime": false,
+                    "riskClass": "high",
+                    "requiresApproval": true
+                  }
+                },
+                "cert_file": {
+                  "type": "string",
+                  "x-arinna": { "secretRefOnly": true, "userExposed": false, "riskClass": "high" }
+                },
+                "key_file": {
+                  "type": "string",
+                  "x-arinna": { "secretRefOnly": true, "userExposed": false, "riskClass": "high" }
+                },
+                "client_ca": {
+                  "type": "string",
+                  "x-arinna": { "secretRefOnly": true, "userExposed": false, "riskClass": "high" }
+                }
+              }
+            },
+            "permissive_origin_host": {
+              "type": "boolean",
+              "default": false,
+              "description": "MUST remain false in production (accepts unmatched Origin-Host).",
+              "x-arinna": {
+                "userExposed": false,
+                "mutableAtRuntime": false,
+                "riskClass": "high",
+                "requiresApproval": true
+              }
+            },
+            "redirect_default_ttl": {
+              "$ref": "#/$defs/goDuration",
+              "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" }
+            },
+            "redirect_max_depth": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 32,
+              "default": 3,
+              "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" }
+            },
+            "redirect_cache_capacity": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 10000,
+              "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low", "serviceLevelPreset": true }
+            },
+            "redirect_idr_retry_enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Opt-in transparent IDR retry on §6.5 redirect (double-application risk).",
+              "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "medium", "requiresApproval": true }
+            },
+            "redirect_asr_retry_enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Opt-in transparent ASR retry on §6.5 redirect (5002 risk on some PCEFs).",
+              "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "medium", "requiresApproval": true }
+            }
+          }
+        },
+        "admin": {
+          "type": "object",
+          "properties": {
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 8081 },
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "x-arinna": { "userExposed": true, "mutableAtRuntime": false, "riskClass": "medium" }
+            },
+            "auth": {
+              "type": "object",
+              "description": "Bearer-token (JWT) authentication on /api/admin/v1: the signature must verify against a key from jwks_url (RS256/ES256), and iss, aud and exp must match. jwks_url, issuer and audience are required when enabled.",
+              "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] },
+              "then": {
+                "required": ["jwks_url", "issuer", "audience"],
+                "properties": {
+                  "jwks_url": { "minLength": 1 },
+                  "issuer": { "minLength": 1 },
+                  "audience": { "minLength": 1 }
+                }
+              },
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Mandatory in prod (startup refuses when app_env=prod and this is false).",
+                  "x-arinna": {
+                    "userExposed": true,
+                    "mutableAtRuntime": false,
+                    "riskClass": "high",
+                    "requiresApproval": true
+                  }
+                },
+                "jwks_url": {
+                  "type": "string",
+                  "description": "JWKS endpoint of the identity provider, e.g. Keycloak's /realms/<realm>/protocol/openid-connect/certs.",
+                  "x-arinna": { "userExposed": true, "mutableAtRuntime": false, "riskClass": "medium" }
+                },
+                "issuer": {
+                  "type": "string",
+                  "description": "Expected iss claim, e.g. https://keycloak.example/realms/<realm>.",
+                  "x-arinna": { "userExposed": true, "mutableAtRuntime": false, "riskClass": "medium" }
+                },
+                "audience": {
+                  "type": "string",
+                  "description": "Expected aud claim: the client or audience the identity provider issues admin tokens for.",
+                  "x-arinna": { "userExposed": true, "mutableAtRuntime": false, "riskClass": "medium" }
+                }
+              }
+            }
+          }
+        },
+        "nats": {
+          "type": "object",
+          "required": ["url"],
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "NATS server URL (backend event bus).",
+              "minLength": 1,
+              "x-arinna": {
+                "userExposed": true,
+                "mutableAtRuntime": false,
+                "riskClass": "high",
+                "requiresApproval": true
+              }
+            },
+            "connect_timeout": {
+              "$ref": "#/$defs/goDuration",
+              "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" }
+            },
+            "request_timeout": {
+              "$ref": "#/$defs/goDuration",
+              "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" }
+            },
+            "tls": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false,
+                  "x-arinna": { "userExposed": true, "mutableAtRuntime": false, "riskClass": "high", "requiresApproval": true }
+                }
+              }
+            },
+            "circuit_breaker": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string", "default": "diameter-gateway-nats" },
+                "max_requests": { "type": "integer", "minimum": 1, "default": 5,
+                  "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" } },
+                "interval": { "$ref": "#/$defs/goDuration" },
+                "timeout": { "$ref": "#/$defs/goDuration" },
+                "failure_ratio": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.5,
+                  "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" } },
+                "min_requests": { "type": "integer", "minimum": 1, "default": 10,
+                  "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" } }
+              }
+            }
+          }
+        },
+        "peers": {
+          "type": "array",
+          "description": "Accepted Diameter peers (MME/PGW/PCRF/OCS). Add/remove and re-apply to reconfigure.",
+          "items": {
+            "type": "object",
+            "required": ["ip"],
+            "properties": {
+              "ip": { "type": "string", "description": "Peer IP or CIDR." },
+              "name": { "type": "string", "description": "Expected Origin-Host." },
+              "realm": { "type": "string", "description": "Expected Origin-Realm." },
+              "allowed_origins": { "type": "array", "items": { "type": "string" } },
+              "rate_limit_tps": { "type": "integer", "minimum": 0, "default": 0,
+                "description": "Per-peer forward-request cap (0 = unbounded)." }
+            }
+          },
+          "x-arinna": {
+            "userExposed": true,
+            "mutableAtRuntime": true,
+            "riskClass": "medium",
+            "tenantScoped": true
+          }
+        },
+        "sgd": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" }
+            },
+            "request_timeout": { "$ref": "#/$defs/goDuration" }
+          }
+        },
+        "charging": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" }
+            },
+            "request_timeout": { "$ref": "#/$defs/goDuration" },
+            "gx_context_ids": { "type": "array", "items": { "type": "string" },
+              "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" } },
+            "gy_context_ids": { "type": "array", "items": { "type": "string" },
+              "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" } },
+            "ro_context_ids": { "type": "array", "items": { "type": "string" },
+              "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" } },
+            "gx": {
+              "type": "object",
+              "properties": {
+                "session_eviction": {
+                  "type": "object",
+                  "properties": {
+                    "preset": {
+                      "type": "string",
+                      "enum": ["", "iot", "smartphone", "mixed", "strict"],
+                      "default": "mixed",
+                      "description": "Session-Id→PCEF binding eviction profile.",
+                      "x-arinna": {
+                        "userExposed": true,
+                        "mutableAtRuntime": true,
+                        "riskClass": "low"
+                      }
+                    },
+                    "min_lifetime": { "$ref": "#/$defs/goDuration" },
+                    "idle_timeout": { "$ref": "#/$defs/goDuration" },
+                    "absolute_lifetime": { "$ref": "#/$defs/goDuration" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

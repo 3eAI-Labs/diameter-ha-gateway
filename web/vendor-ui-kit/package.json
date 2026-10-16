@@ -1,0 +1,29 @@
+{
+  "name": "@3eai-labs/ui-kit",
+  "version": "1.0.0",
+  "description": "3eAI Labs Corporate UI Kit and Design System",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc && npm run build:assets",
+    "build:assets": "mkdir -p dist/assets && cp -r src/assets/. dist/assets/ && cp src/fonts/*.woff2 src/fonts/OFL.txt dist/fonts/ && node -e \"const{interFontFaceCss}=require('./dist/fonts');require('fs').writeFileSync('dist/fonts/inter.css',interFontFaceCss('.')+'\\n')\"",
+    "lint": "eslint src --ext .ts,.tsx"
+  },
+  "peerDependencies": {
+    "@mui/icons-material": "^5.0.0",
+    "@mui/material": "^5.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
+  },
+  "devDependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/icons-material": "^7.3.6",
+    "@mui/material": "^7.3.6",
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.0.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "typescript": "^5.0.0"
+  }
+}
