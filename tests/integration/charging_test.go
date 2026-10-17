@@ -129,6 +129,7 @@ func TestGyIntegration_InitialRequest(t *testing.T) {
 			OriginRealm: "test.com",
 			ProductName: "TestOCS",
 		},
+		Peers: []config.PeerConfig{{IP: "127.0.0.1", Name: "client.test.com"}},
 	}
 
 	server := diameter.NewServer(cfg, &MockHandler{}, nil, pm)
@@ -187,6 +188,7 @@ func TestGyIntegration_TerminationRequest(t *testing.T) {
 			OriginRealm: "test.com",
 			ProductName: "TestOCS",
 		},
+		Peers: []config.PeerConfig{{IP: "127.0.0.1", Name: "client.test.com"}},
 	}
 
 	server := diameter.NewServer(cfg, &MockHandler{}, nil, pm)
@@ -256,6 +258,7 @@ func TestGxIntegration_InitialAttach(t *testing.T) {
 			OriginRealm: "test.com",
 			ProductName: "TestPCRF",
 		},
+		Peers: []config.PeerConfig{{IP: "127.0.0.1", Name: "client.test.com"}},
 	}
 
 	server := diameter.NewServer(cfg, &MockHandler{}, nil, pm)
@@ -325,6 +328,7 @@ func TestRoIntegration_IMSVoiceCall(t *testing.T) {
 			OriginRealm: "test.com",
 			ProductName: "TestOCS",
 		},
+		Peers: []config.PeerConfig{{IP: "127.0.0.1", Name: "client.test.com"}},
 	}
 
 	server := diameter.NewServer(cfg, &MockHandler{}, nil, pm)
@@ -379,6 +383,7 @@ func TestGyIntegration_NATSError(t *testing.T) {
 			OriginRealm: "test.com",
 			ProductName: "TestOCS",
 		},
+		Peers: []config.PeerConfig{{IP: "127.0.0.1", Name: "client.test.com"}},
 	}
 
 	server := diameter.NewServer(cfg, &MockHandler{}, nil, pm)

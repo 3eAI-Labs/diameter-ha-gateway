@@ -110,7 +110,9 @@ type ServerConfig struct {
 	// IdlePeerTimeout — peers that haven't sent any APPLICATION traffic
 	// (forward request) within this window are force-closed by the
 	// watchdog. Distinct from watchdog_timeout because DWA-only
-	// liveness can mask half-open zombies. Default 5m. Empty / "0" disables.
+	// liveness can mask half-open zombies. Default "0", disabled: a peer
+	// that is up but quiet (an MME at night, a PCEF that only receives
+	// RARs) would otherwise be disconnected every window.
 	IdlePeerTimeout string `mapstructure:"idle_peer_timeout"`
 
 	// TLS controls Diameter TLS (RFC 6733 §13.1).
@@ -280,7 +282,7 @@ func Load() (*Config, error) {
 		cfg.Server.WatchdogTimeout = "90s"
 	}
 	if cfg.Server.IdlePeerTimeout == "" {
-		cfg.Server.IdlePeerTimeout = "5m"
+		cfg.Server.IdlePeerTimeout = "0"
 	}
 
 	// Redirect-Host defaults.

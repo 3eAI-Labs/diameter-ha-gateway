@@ -63,8 +63,9 @@ func (h *Handler) HandleCCR(c diam.Conn, m *diam.Message) {
 
 	// IMS event type if available
 	var eventTypeName string
-	if event.ServiceInformation != nil && event.ServiceInformation.IMSInformation != nil {
-		eventTypeName = EventTypeName(event.ServiceInformation.IMSInformation.EventType)
+	if event.ServiceInformation != nil && event.ServiceInformation.IMSInformation != nil &&
+		event.ServiceInformation.IMSInformation.EventType != nil {
+		eventTypeName = event.ServiceInformation.IMSInformation.EventType.SIPMethod
 	}
 
 	logger.Info("Ro CCR received",

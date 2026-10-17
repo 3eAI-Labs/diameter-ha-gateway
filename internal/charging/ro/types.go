@@ -50,7 +50,7 @@ type RoServiceInformation struct {
 
 // IMSInformation contains IMS-specific charging information (TS 32.260)
 type IMSInformation struct {
-	EventType                    uint32                `json:"event_type,omitempty"`
+	EventType                    *EventType            `json:"event_type,omitempty"`
 	RoleOfNode                   uint32                `json:"role_of_node,omitempty"`
 	NodeFunctionality            uint32                `json:"node_functionality,omitempty"`
 	UserSessionID                string                `json:"user_session_id,omitempty"`
@@ -232,22 +232,14 @@ type RoAnswer struct {
 	RemainingBalance     *charging.CCMoney `json:"remaining_balance,omitempty"`
 }
 
-// =============================================================================
-// IMS Event Type Constants (TS 32.260)
-// =============================================================================
-
-const (
-	EventTypeSIPSessionInvite    uint32 = 0
-	EventTypeSIPSessionTerminate uint32 = 1
-	EventTypeSIPRegister         uint32 = 2
-	EventTypeSIPSubscribe        uint32 = 3
-	EventTypeSIPNotify           uint32 = 4
-	EventTypeSIPRefer            uint32 = 5
-	EventTypeSIPMessage          uint32 = 6
-	EventTypeSIPPublish          uint32 = 7
-	EventTypeSIPOption           uint32 = 8
-	EventTypeSIPSessionProgress  uint32 = 9
-)
+// EventType is the Event-Type AVP (823, TS 32.299 §7.2.65): a Grouped AVP
+// naming the SIP method, and the SIP event package and expiry of a
+// SUBSCRIBE/NOTIFY, that the CCR charges for.
+type EventType struct {
+	SIPMethod string `json:"sip_method,omitempty"`
+	Event     string `json:"event,omitempty"`
+	Expires   uint32 `json:"expires,omitempty"`
+}
 
 // Role-of-Node values
 const (
@@ -278,26 +270,6 @@ const (
 // CCRequestTypeName returns the name of the CC-Request-Type
 func CCRequestTypeName(t uint32) string {
 	if name, ok := charging.CCRequestTypeNames[t]; ok {
-		return name
-	}
-	return "UNKNOWN"
-}
-
-// EventTypeName returns the name of the IMS event type
-func EventTypeName(t uint32) string {
-	names := map[uint32]string{
-		EventTypeSIPSessionInvite:    "SIP_SESSION_INVITE",
-		EventTypeSIPSessionTerminate: "SIP_SESSION_TERMINATE",
-		EventTypeSIPRegister:         "SIP_REGISTER",
-		EventTypeSIPSubscribe:        "SIP_SUBSCRIBE",
-		EventTypeSIPNotify:           "SIP_NOTIFY",
-		EventTypeSIPRefer:            "SIP_REFER",
-		EventTypeSIPMessage:          "SIP_MESSAGE",
-		EventTypeSIPPublish:          "SIP_PUBLISH",
-		EventTypeSIPOption:           "SIP_OPTION",
-		EventTypeSIPSessionProgress:  "SIP_SESSION_PROGRESS",
-	}
-	if name, ok := names[t]; ok {
 		return name
 	}
 	return "UNKNOWN"

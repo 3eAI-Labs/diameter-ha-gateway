@@ -95,7 +95,7 @@ func (t *Translator) ToS6aEvent(m *diam.Message, traceID string) (*pb.S6aEvent, 
 		event.SGSNNumber = fmt.Sprintf("%x", a.Data.Serialize())
 	}
 	if a := t.findAVP(m, avp.UESRVCCCapability, 10415); a != nil {
-		event.UE_SRVCC = uint32(a.Data.(datatype.Unsigned32))
+		event.UE_SRVCC = uint32(a.Data.(datatype.Enumerated)) // Enumerated, TS 29.272 §7.3.130
 	}
 	if a := t.findAVP(m, avp.HomogeneousSupportofIMSVoiceOverPSSessions, 10415); a != nil {
 		event.HomogeneousIMS = uint32(a.Data.(datatype.Enumerated))
@@ -135,7 +135,7 @@ func (t *Translator) ToS6aEvent(m *diam.Message, traceID string) (*pb.S6aEvent, 
 	if a, err := m.FindAVP(avp.ServiceSelection, 0); err == nil {
 		event.ServiceSelect = AVPString(a)
 	}
-	if a := t.findAVP(m, 1434, 10415); a != nil { // Alert-Reason
+	if a := t.findAVP(m, 1434, 10415); a != nil { // Alert-Reason, Enumerated (§7.3.83)
 		event.AlertReason = uint32(a.Data.(datatype.Enumerated))
 	}
 

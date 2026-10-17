@@ -188,7 +188,7 @@ func (t *Translator) ToCCREvent(m *diam.Message, traceID string) (*GxEvent, erro
 		event.CalledStationID = avpString(a)
 	}
 	if a := t.findAVP(m, avpPDNConnectionID, vendorID3GPP); a != nil {
-		event.PDNConnectionID = uint64(a.Data.(datatype.Unsigned64))
+		event.PDNConnectionID = a.Data.Serialize() // OctetString, TS 29.212 §5.3.58
 	}
 	if a := t.findAVP(m, avpBearerIdentifier, vendorID3GPP); a != nil {
 		event.BearerIdentifier = a.Data.Serialize()

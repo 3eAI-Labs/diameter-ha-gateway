@@ -175,7 +175,7 @@ config:
     mme_dest_realm: ""
     watchdog_interval: "30s"
     watchdog_timeout: "90s"
-    idle_peer_timeout: "5m"
+    idle_peer_timeout: "0" # >0 force-closes a peer with no request in the window, even a healthy quiet one
     tls:
       enabled: false
       cert_file: ""

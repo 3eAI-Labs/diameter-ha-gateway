@@ -52,9 +52,12 @@ func TestS13_EndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, eir.Flush())
 
-	cfg := &config.Config{Server: config.ServerConfig{
-		ListenAddr: "127.0.0.1:3874", OriginHost: "gw.test.com", OriginRealm: "test.com", ProductName: "TestGateway",
-	}}
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			ListenAddr: "127.0.0.1:3874", OriginHost: "gw.test.com", OriginRealm: "test.com", ProductName: "TestGateway",
+		},
+		Peers: []config.PeerConfig{{IP: "127.0.0.1", Name: "mme.client.com"}},
+	}
 	pm := diameter.NewPeerManagerWith(diameter.PeerManagerOptions{OriginHost: "gw.test.com", OriginRealm: "test.com"})
 	gw := service.NewGatewayService(nc, pm, "gw.test.com", "test.com")
 	ctx, cancel := context.WithCancel(context.Background())

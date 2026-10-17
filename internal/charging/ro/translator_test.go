@@ -4,6 +4,7 @@
 package ro
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/avp"
 	"github.com/fiorix/go-diameter/v4/diam/datatype"
+	"github.com/fiorix/go-diameter/v4/diam/dict"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -55,7 +57,10 @@ func TestToCCREvent_IMSInformation(t *testing.T) {
 	// Add Service-Information with IMS-Information
 	imsInfo := &diam.GroupedAVP{
 		AVP: []*diam.AVP{
-			diam.NewAVP(823, avp.Mbit|avp.Vbit, 10415, datatype.Enumerated(EventTypeSIPSessionInvite)),           // Event-Type
+			diam.NewAVP(823, avp.Mbit|avp.Vbit, 10415, &diam.GroupedAVP{AVP: []*diam.AVP{ // Event-Type
+				diam.NewAVP(824, avp.Mbit|avp.Vbit, 10415, datatype.UTF8String("INVITE")), // SIP-Method
+				diam.NewAVP(888, avp.Mbit|avp.Vbit, 10415, datatype.Unsigned32(3600)),     // Expires
+			}}),
 			diam.NewAVP(829, avp.Mbit|avp.Vbit, 10415, datatype.Enumerated(RoleOriginating)),                     // Role-of-Node
 			diam.NewAVP(862, avp.Mbit|avp.Vbit, 10415, datatype.Enumerated(NodeFunctionalitySCSCF)),              // Node-Functionality
 			diam.NewAVP(832, avp.Mbit|avp.Vbit, 10415, datatype.UTF8String("sip:+491234567890@ims.example.com")), // Called-Party-Address
@@ -69,6 +74,13 @@ func TestToCCREvent_IMSInformation(t *testing.T) {
 	}
 	m.NewAVP(873, avp.Mbit|avp.Vbit, 10415, serviceInfo)
 
+	// Decoded from the wire, as the server reads it: Event-Type is Grouped
+	// in the dictionary, which an AVP built in memory does not show.
+	wire, err := m.Serialize()
+	require.NoError(t, err)
+	m, err = diam.ReadMessage(bytes.NewReader(wire), dict.Default)
+	require.NoError(t, err)
+
 	event, err := tr.ToCCREvent(m, "trace-3")
 	require.NoError(t, err)
 
@@ -76,7 +88,8 @@ func TestToCCREvent_IMSInformation(t *testing.T) {
 	require.NotNil(t, event.ServiceInformation.IMSInformation)
 
 	ims := event.ServiceInformation.IMSInformation
-	assert.Equal(t, uint32(EventTypeSIPSessionInvite), ims.EventType)
+	require.NotNil(t, ims.EventType)
+	assert.Equal(t, EventType{SIPMethod: "INVITE", Expires: 3600}, *ims.EventType)
 	assert.Equal(t, uint32(RoleOriginating), ims.RoleOfNode)
 	assert.Equal(t, uint32(NodeFunctionalitySCSCF), ims.NodeFunctionality)
 	assert.Equal(t, "sip:+491234567890@ims.example.com", ims.CalledPartyAddress)
@@ -252,32 +265,7 @@ func TestCCRequestTypeName(t *testing.T) {
 	}
 }
 
-func TestEventTypeName(t *testing.T) {
-	tests := []struct {
-		eventType uint32
-		expected  string
-	}{
-		{EventTypeSIPSessionInvite, "SIP_SESSION_INVITE"},
-		{EventTypeSIPSessionTerminate, "SIP_SESSION_TERMINATE"},
-		{EventTypeSIPRegister, "SIP_REGISTER"},
-		{EventTypeSIPMessage, "SIP_MESSAGE"},
-		{99, "UNKNOWN"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.expected, func(t *testing.T) {
-			name := EventTypeName(tc.eventType)
-			assert.Equal(t, tc.expected, name)
-		})
-	}
-}
-
 func TestIMSConstants(t *testing.T) {
-	// Event Types
-	assert.Equal(t, uint32(0), EventTypeSIPSessionInvite)
-	assert.Equal(t, uint32(1), EventTypeSIPSessionTerminate)
-	assert.Equal(t, uint32(2), EventTypeSIPRegister)
-
 	// Role-of-Node
 	assert.Equal(t, uint32(0), RoleOriginating)
 	assert.Equal(t, uint32(1), RoleTerminating)

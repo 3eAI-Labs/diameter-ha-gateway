@@ -55,6 +55,9 @@ const (
 
 	// IMS-Information AVPs
 	avpEventType               = 823
+	avpSIPMethod               = 824
+	avpEvent                   = 825
+	avpExpires                 = 888
 	avpRoleOfNode              = 829
 	avpNodeFunctionality       = 862
 	avpUserSessionID           = 830
@@ -393,12 +396,33 @@ func (t *Translator) parseServiceInformation(a *diam.AVP) *RoServiceInformation 
 	return nil
 }
 
+// parseEventType decodes Event-Type, a Grouped AVP (TS 32.299 §7.2.65).
+func (t *Translator) parseEventType(a *diam.AVP) *EventType {
+	g, ok := a.Data.(*diam.GroupedAVP)
+	if !ok {
+		return nil
+	}
+	et := &EventType{}
+	if v := t.findAVPInGrouped(g, avpSIPMethod, vendorID3GPP); v != nil {
+		et.SIPMethod = avpString(v)
+	}
+	if v := t.findAVPInGrouped(g, avpEvent, vendorID3GPP); v != nil {
+		et.Event = avpString(v)
+	}
+	if v := t.findAVPInGrouped(g, avpExpires, vendorID3GPP); v != nil {
+		if n, ok := v.Data.(datatype.Unsigned32); ok {
+			et.Expires = uint32(n)
+		}
+	}
+	return et
+}
+
 func (t *Translator) parseIMSInformation(a *diam.AVP) *IMSInformation {
 	if g, ok := a.Data.(*diam.GroupedAVP); ok {
 		ims := &IMSInformation{}
 
 		if et := t.findAVPInGrouped(g, avpEventType, vendorID3GPP); et != nil {
-			ims.EventType = uint32(et.Data.(datatype.Enumerated))
+			ims.EventType = t.parseEventType(et)
 		}
 		if ron := t.findAVPInGrouped(g, avpRoleOfNode, vendorID3GPP); ron != nil {
 			ims.RoleOfNode = uint32(ron.Data.(datatype.Enumerated))

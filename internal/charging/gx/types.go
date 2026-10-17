@@ -69,7 +69,7 @@ type GxEvent struct {
 	ThreeGPPUserLocationInfo []byte `json:"3gpp_user_location_info,omitempty"`
 	ThreeGPPMSTimeZone       []byte `json:"3gpp_ms_timezone,omitempty"`
 	CalledStationID          string `json:"called_station_id,omitempty"`
-	PDNConnectionID          uint64 `json:"pdn_connection_id,omitempty"`
+	PDNConnectionID          []byte `json:"pdn_connection_id,omitempty"`
 	BearerIdentifier         []byte `json:"bearer_identifier,omitempty"`
 	BearerOperation          uint32 `json:"bearer_operation,omitempty"`
 

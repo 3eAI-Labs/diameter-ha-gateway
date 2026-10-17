@@ -25,8 +25,9 @@ server:
 
   # Idle peer GC — force-close peers that haven't sent any APPLICATION
   # traffic (forward request, NOT DWA) within the window. Catches zombie
-  # peers whose app-layer is hung but DWR/DWA still flows. "0" disables.
-  idle_peer_timeout: "5m"
+  # peers whose app-layer is hung but DWR/DWA still flows. "0" disables;
+  # disabled by default, as it also closes a peer that is up but quiet.
+  idle_peer_timeout: "0"
 
   # Diameter TLS — RFC 6733 §13.1.
   tls:

@@ -9,6 +9,59 @@ describes what changed for an installation of 0.9.4.
 
 ## [Unreleased]
 
+## [0.10.3] — 2026-10-17
+
+Security release; chart 0.2.3. Every installation of 0.10.0–0.10.2 should upgrade. Before
+upgrading, check that each of your peers has an entry in `peers` (source IP and Origin-Host): the
+earlier releases accepted every peer, this one disconnects any peer without an entry. Configuration
+keys and NATS subjects are unchanged; the Gx and Ro envelope changes under *Changed* affect only
+CCRs that earlier releases could not answer.
+
+### Security
+
+- **The peer whitelist was not applied (0.10.0–0.10.2).** The gateway registered its CER handler
+  with go-diameter's state machine, which does not accept a handler for CER and ignored it. Every
+  peer that could open a connection received CEA 2001, and its requests — ULR, AIR and every other
+  application request — were handed to the applications. The gateway now checks the CER against
+  `peers` (source IP and Origin-Host) before the state machine answers it; any other peer is
+  disconnected without a CEA. Until you upgrade, restrict the Diameter port to your peers' addresses
+  at the network level.
+  - A multi-homed SCTP peer is accepted only when every one of its addresses matches its `peers`
+    entry, since the peer lists those addresses itself; whitelist such a peer with a CIDR.
+  - DPR, DWA and DPA count for the peer their connection registered as at CER, not for the
+    Origin-Host they carry, so one peer cannot disconnect another.
+- **One AVP could disconnect a peer.** Six AVPs, each valid per specification, made the request's
+  handler panic, and go-diameter closed the connection, dropping every other request on it:
+  UE-SRVCC-Capability (ULR, NOR), Alert-Reason (NOR), Bearer-Operation, AN-GW-Status and
+  PDN-Connection-ID (Gx CCR), and Event-Type (Ro CCR). Each is now decoded with its specification
+  type. A request whose handler panics is answered 5012 (DIAMETER_UNABLE_TO_COMPLY) on a connection
+  that stays up, and counted in `diameter_handler_panic_total`.
+
+### Fixed
+
+- **Application-initiated requests reach the peer.** No peer was ever registered, so CLR, IDR, DSR,
+  RSR and Gx RAR/ASR were all answered 3002 ("peer not connected"), Gx sessions were not bound to
+  their PCEF, and the gateway sent no DWR to its peers and no DPR on shutdown. All of these now work
+  for every whitelisted peer.
+
+### Known limitations
+
+- **SGd does not work** in this or any earlier release. Its commands are defined under the S6c
+  Application-Id (16777312; SGd is 16777313, TS 29.338 §4.8), without the AVP rules go-diameter
+  needs to decode them, and several of its AVP codes are wrong; an SGd message closes the
+  connection it arrives on. It will be rewritten against TS 29.338 in a later release; until then,
+  do not route SGd or S6c traffic to the gateway.
+
+### Changed
+
+- **`server.idle_peer_timeout` is off by default** (was `5m`, never applied because no peer was
+  registered). Set, it disconnects a peer that has sent no request within the window, including a
+  healthy one that is only quiet. Dead peers are found by the DWR watchdog.
+- **Gx and Ro envelope fields** (not yet a published contract): `pdn_connection_id` is the
+  PDN-Connection-ID octets (TS 29.212 §5.3.58), base64 in JSON, instead of a number;
+  `ims_information.event_type` is an object `{sip_method, event, expires}` (TS 32.299 §7.2.65)
+  instead of a number. No CCR carrying either AVP was answered before this release.
+
 ## [0.10.2] — 2026-10-17
 
 Chart 0.2.2. The gateway itself is unchanged from 0.10.1: the same binary, configuration and NATS
@@ -116,7 +169,8 @@ No change to the gateway's behaviour, configuration or NATS contract.
 See the [README](README.md#known-limitations). New in this release: gateway-initiated requests
 reach directly connected peers only, a consequence of binding identities to connections.
 
-[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.2...HEAD
+[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.3...HEAD
+[0.10.3]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.2...v0.10.3
 [0.10.2]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/releases/tag/v0.10.0

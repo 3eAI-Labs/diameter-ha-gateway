@@ -51,6 +51,7 @@ func TestDiameterMessages(t *testing.T) {
 			OriginRealm: "test.com",
 			ProductName: "TestGateway",
 		},
+		Peers: []config.PeerConfig{{IP: "127.0.0.1", Name: "mme.client.com"}},
 	}
 	handler := &MockHandler{}
 	pm := diameter.NewPeerManager()

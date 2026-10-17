@@ -186,6 +186,11 @@ const dict29272XML = `<?xml version="1.0" encoding="UTF-8"?>
         <avp name="PDN-Connection-Continuity" code="1690" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
             <data type="Unsigned32"/>
         </avp>
+
+        <!-- NOR (§7.2.17): read by ToS6aEvent; undefined, it decoded as Unknown -->
+        <avp name="Alert-Reason" code="1434" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="Enumerated"/>
+        </avp>
     </application>
 </diameter>`
 

@@ -31,7 +31,7 @@ applications are not checked against their specifications yet (see
 | Gx (TS 29.212) | PCEF ⇄ PCRF | CCR | RAR, ASR |
 | Gy (RFC 4006, TS 32.299) | PGW ⇄ OCS | CCR | — |
 | Ro (RFC 4006, TS 32.299) | IMS ⇄ OCS | CCR | — |
-| SGd (TS 29.338) | MME ⇄ SMSC | OFR, TFR, SRR, ALR | SRR, TFR, ALR |
+| SGd (TS 29.338) — not working, see [Known limitations](#known-limitations) | MME ⇄ SMSC | OFR, TFR, SRR, ALR | SRR, TFR, ALR |
 
 - **Requests from the network** are published as a NATS request on `diameter.<app>.<cmd>`
   (`diameter.s6a.ulr`, `diameter.gx.ccr`, …); the application's reply becomes the Diameter answer.
@@ -108,6 +108,9 @@ answers the request with its publish acknowledgement, and the requester never se
 - **In-memory state per replica.** Pending gateway-initiated requests, Gx session-to-peer bindings
   and the redirect cache live in one replica's memory and are lost when it stops.
 - Gy re-authorisation (RAR) is not implemented.
+- **SGd does not work.** Its commands are defined under the S6c Application-Id (16777312; SGd is
+  16777313, TS 29.338 §4.8) and cannot be decoded; an SGd message closes the connection it arrives
+  on. Do not route SGd or S6c traffic to the gateway until it is rewritten.
 
 ## Contributing
 

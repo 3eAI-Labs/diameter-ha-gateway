@@ -27,6 +27,10 @@ var ErrPeerUnauthorized = errors.New("peer not in whitelist")
 //     be either an exact IP literal or a CIDR (e.g. "10.0.0.0/24"). An empty
 //     PeerConfig.IP is treated as "any IP allowed for this entry" — useful
 //     for mTLS-only deployments where peer identity is bound by certificate.
+//   - A multi-homed SCTP association has several source addresses
+//     ("ip1/ip2:port"). Every one of them must match the entry: the peer
+//     lists them itself, so one matching address proves nothing. Whitelist
+//     such a peer with a CIDR that covers all its addresses.
 //   - originHost is then matched against PeerConfig.Name and the optional
 //     PeerConfig.AllowedOrigins[] alternates. An empty PeerConfig.Name skips
 //     the check IF cfg.Server.PermissiveOriginHost is true (dev-only escape).
@@ -44,12 +48,12 @@ func AuthorizePeer(cfg *config.Config, sourceIP, originHost string) (*config.Pee
 		return nil, fmt.Errorf("%w: missing Origin-Host", ErrPeerUnauthorized)
 	}
 
-	parsedIP := net.ParseIP(stripPort(sourceIP))
+	hosts := sourceHosts(sourceIP)
 
 	for i := range cfg.Peers {
 		peer := &cfg.Peers[i]
 
-		if !ipMatches(peer.IP, parsedIP, sourceIP) {
+		if !allIPsMatch(peer.IP, hosts) {
 			continue
 		}
 		if !originMatches(peer, originHost, cfg.Server.PermissiveOriginHost) {
@@ -69,6 +73,35 @@ func stripPort(addr string) string {
 		return host
 	}
 	return addr
+}
+
+// sourceHosts returns the address hosts of a connection's remote address:
+// one for TCP ("10.0.0.5:51234", "[2001:db8::1]:51234"), one or more for
+// SCTP, which go-diameter's SCTP transport writes "ip1/ip2:port" with IPv6
+// addresses in brackets.
+func sourceHosts(addr string) []string {
+	host := stripPort(addr)
+	if !strings.Contains(host, "/") {
+		return []string{host}
+	}
+	if i := strings.LastIndex(addr, ":"); i > 0 && !strings.HasSuffix(addr, "]") {
+		host = addr[:i]
+	}
+	hosts := strings.Split(host, "/")
+	for i, h := range hosts {
+		hosts[i] = strings.TrimSuffix(strings.TrimPrefix(h, "["), "]")
+	}
+	return hosts
+}
+
+// allIPsMatch reports whether every source host matches the entry's IP.
+func allIPsMatch(peerIP string, hosts []string) bool {
+	for _, h := range hosts {
+		if !ipMatches(peerIP, net.ParseIP(h), h) {
+			return false
+		}
+	}
+	return len(hosts) > 0
 }
 
 // ipMatches reports whether parsedIP belongs to the configured peer IP entry.

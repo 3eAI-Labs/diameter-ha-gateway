@@ -74,10 +74,12 @@ application ◄──NATS reply──── ReverseService ◄──CLA── MM
 
 ## Peers
 
-The peer manager tracks each connection from CER to disconnect: it sends DWR on an idle connection
-and closes it when DWA stops, closes peers that send no application traffic within
-`idle_peer_timeout`, and on shutdown sends DPR to every peer and waits for DPA. Peer identity is
-taken from the CER; a later request's Origin-Host does not move a connection.
+A peer is accepted at CER only from the whitelist (source IP and Origin-Host); any other peer is
+disconnected without a CEA. The peer manager tracks each accepted connection from CER to
+disconnect: it sends DWR on an idle connection and marks the peer down after three unanswered DWRs,
+closes peers that send no application traffic within `idle_peer_timeout` when that is set (off by
+default), and on shutdown sends DPR to every peer and waits for DPA. Peer identity is taken from the
+CER; a later request's Origin-Host does not move a connection.
 
 ## State
 

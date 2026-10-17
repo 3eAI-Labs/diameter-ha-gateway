@@ -7,9 +7,9 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/3eAI-Labs/diameter-ha-gateway/internal/config"
 	"github.com/3eAI-Labs/diameter-ha-gateway/internal/platform/alarm"
@@ -147,8 +147,12 @@ func (s *DiameterServer) Start(ctx context.Context) error {
 		ProductName: datatype.UTF8String(s.cfg.Server.ProductName),
 	})
 
-	// Capabilities Exchange Handler (for peer registration)
-	s.stateMachine.HandleFunc("CER", s.handleCER)
+	// CER is not registered here: the state machine answers it itself and
+	// refuses a handler for it. peerGate authorises the peer first.
+	// The state machine reports refused registrations and unhandled
+	// messages on its error channel; log them.
+	go s.logErrorReports(ctx)
+
 	// Device-Watchdog-Answer observer — feeds the explicit watchdog.
 	s.stateMachine.HandleFunc("DWA", s.handleDWA)
 	// Disconnect-Peer-Request handler — peer-initiated graceful disconnect.
@@ -224,7 +228,48 @@ func (s *DiameterServer) Start(ctx context.Context) error {
 	if s.cfg.Server.TLS.Enabled {
 		return s.serveTLS()
 	}
-	return diam.ListenAndServeNetwork(s.cfg.Server.Network, s.cfg.Server.ListenAddr, s.stateMachine, nil)
+	return diam.ListenAndServeNetwork(s.cfg.Server.Network, s.cfg.Server.ListenAddr, s.gate(), nil)
+}
+
+// gate puts peer authorisation and panic recovery in front of the state
+// machine (peer_gate.go).
+func (s *DiameterServer) gate() *peerGate {
+	return &peerGate{
+		next:      s.stateMachine,
+		authorize: s.authorizeCER,
+		register: func(c diam.Conn, originHost string) {
+			if s.peerManager != nil {
+				s.peerManager.Register(c, originHost)
+			}
+		},
+		answer: func(c diam.Conn, m *diam.Message, resultCode uint32) {
+			a := CompleteAnswer(m.Answer(resultCode), m, s.cfg.Server.OriginHost, s.cfg.Server.OriginRealm)
+			if _, err := a.WriteTo(c); err != nil {
+				logger.Warn("answer write failed", logger.String("err", err.Error()))
+			}
+		},
+	}
+}
+
+func (s *DiameterServer) logErrorReports(ctx context.Context) {
+	reports := s.stateMachine.ErrorReports()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case r := <-reports:
+			if r == nil || r.Error == nil {
+				continue
+			}
+			attrs := []any{logger.String("err", r.Error.Error())}
+			if r.Message != nil {
+				attrs = append(attrs,
+					logger.String("command_code", strconv.FormatUint(uint64(r.Message.Header.CommandCode), 10)),
+					logger.String("application_id", strconv.FormatUint(uint64(r.Message.Header.ApplicationID), 10)))
+			}
+			logger.Warn("Diameter state machine error", attrs...)
+		}
+	}
 }
 
 // serveTLS starts a Diameter TLS listener per RFC 6733 §13.1.
@@ -267,29 +312,28 @@ func (s *DiameterServer) serveTLS() error {
 	srv := &diam.Server{
 		Network:   "tcp", // RFC 6733 §13.1 — TLS over TCP only
 		Addr:      s.cfg.Server.ListenAddr,
-		Handler:   s.stateMachine,
+		Handler:   s.gate(),
 		TLSConfig: tlsCfg,
 	}
 	return srv.ListenAndServeTLS(cfg.CertFile, cfg.KeyFile)
 }
 
-// handleCER processes a Capabilities-Exchange-Request: peers are authenticated
-// against the cfg.Peers whitelist (source IP + Origin-Host) before
-// being registered in the PeerManager. The go-diameter state machine still
-// emits the CEA itself; we are an observer that aborts the connection on
-// rejection by closing the socket so go-diameter never advances to "Open".
-func (s *DiameterServer) handleCER(c diam.Conn, m *diam.Message) {
+// authorizeCER checks a Capabilities-Exchange-Request against the cfg.Peers
+// whitelist (source IP + Origin-Host). peerGate calls it before the state
+// machine sees the CER: on rejection the connection is closed and no CEA is
+// sent; on success it returns the Origin-Host the peer is registered under.
+func (s *DiameterServer) authorizeCER(c diam.Conn, m *diam.Message) (string, bool) {
 	originHostAVP, err := m.FindAVP(avp.OriginHost, 0)
 	if err != nil {
 		logger.Warn("CER missing Origin-Host (RFC 6733 §5.3 violation)")
 		c.Close()
-		return
+		return "", false
 	}
 	originHost, ok := originHostAVP.Data.(datatype.DiameterIdentity)
 	if !ok {
 		logger.Warn("CER Origin-Host AVP has unexpected type")
 		c.Close()
-		return
+		return "", false
 	}
 
 	sourceAddr := ""
@@ -320,22 +364,14 @@ func (s *DiameterServer) handleCER(c diam.Conn, m *diam.Message) {
 			logger.String("source_addr", sourceAddr),
 			logger.String("err", authErr.Error()))
 		c.Close()
-		return
+		return "", false
 	}
 
-	_ = peerCfg // operator metadata reserved for admin / per-peer rate limit wiring
-
-	// Authorised peer — register and let the SM emit the CEA.
 	logger.Info("Peer authorized via CER",
 		logger.String("origin_host", string(originHost)),
 		logger.String("source_addr", sourceAddr),
 		logger.String("matched_peer", peerCfg.Name))
-
-	if s.peerManager != nil {
-		s.peerManager.Register(c, string(originHost))
-	}
-	// The sm.StateMachine has built-in CER/CEA handling — we just observed.
-	_ = errors.Is // keep errors import meaningful for future ErrPeerUnauthorized typed checks
+	return string(originHost), true
 }
 
 // handleDPR processes peer-initiated Disconnect-Peer-Request (RFC 6733 §5.4.3).
@@ -350,20 +386,19 @@ func (s *DiameterServer) handleCER(c diam.Conn, m *diam.Message) {
 //
 // If DPA emission fails we still unregister: the peer is going away
 // regardless and keeping it in the routing table risks 3002s on reverse path.
+//
+// The peer is the one the connection registered at CER, not the DPR's
+// Origin-Host: a peer must not be able to disconnect another.
 func (s *DiameterServer) handleDPR(c diam.Conn, m *diam.Message) {
 	if s.peerManager == nil {
 		return
 	}
-	originHostAVP, err := m.FindAVP(avp.OriginHost, 0)
-	if err != nil {
-		return
-	}
-	originHost, ok := originHostAVP.Data.(datatype.DiameterIdentity)
-	if !ok {
+	originHost := s.peerManager.HostOf(c)
+	if originHost == "" {
 		return
 	}
 	monitor.IncrementCounter("diameter_dpr_received_total", map[string]string{
-		"peer": string(originHost),
+		"peer": originHost,
 	})
 
 	dpa := s.translator.CreateDPA(m,
@@ -373,39 +408,34 @@ func (s *DiameterServer) handleDPR(c diam.Conn, m *diam.Message) {
 		// Counted separately from successful DPA: alerting can fire on a
 		// non-zero rate of failed answers.
 		monitor.IncrementCounter("diameter_dpa_write_failures_total", map[string]string{
-			"peer": string(originHost),
+			"peer": originHost,
 		})
 		logger.Warn("DPA write failed — proceeding with unregister",
-			logger.String("origin_host", string(originHost)),
+			logger.String("origin_host", originHost),
 			logger.String("err", err.Error()))
 	} else {
 		monitor.IncrementCounter("diameter_dpa_sent_total", map[string]string{
-			"peer": string(originHost),
+			"peer": originHost,
 		})
 	}
 
 	logger.Info("Peer initiated DPR — DPA sent, unregistering",
-		logger.String("origin_host", string(originHost)))
-	s.peerManager.Unregister(string(originHost))
+		logger.String("origin_host", originHost))
+	s.peerManager.Unregister(originHost)
 }
 
 // handleDWA observes Device-Watchdog-Answer messages and feeds the watchdog
 // state machine in PeerManager. The SM already replies to
 // inbound DWR autonomously; this hook only exists to track liveness for
-// outbound (gateway-initiated) probes.
+// outbound (gateway-initiated) probes. The DWA counts for the peer the
+// connection registered at CER, whatever its Origin-Host says.
 func (s *DiameterServer) handleDWA(c diam.Conn, m *diam.Message) {
 	if s.peerManager == nil {
 		return
 	}
-	originHostAVP, err := m.FindAVP(avp.OriginHost, 0)
-	if err != nil {
-		return
+	if originHost := s.peerManager.HostOf(c); originHost != "" {
+		s.peerManager.RecordDWA(originHost)
 	}
-	originHost, ok := originHostAVP.Data.(datatype.DiameterIdentity)
-	if !ok {
-		return
-	}
-	s.peerManager.RecordDWA(string(originHost))
 }
 
 // handleDPA correlates a Disconnect-Peer-Answer to a peer that we sent DPR
@@ -414,20 +444,15 @@ func (s *DiameterServer) handleDWA(c diam.Conn, m *diam.Message) {
 // have acknowledged, instead of always paying the full timeout.
 //
 // A late-arriving DPA (after DrainAll already force-closed the peer) is
-// dropped silently: GetPeer returns nil for an unregistered host.
+// dropped silently: the connection no longer maps to a registered peer. As
+// for DWA, the peer is the connection's, not the DPA's Origin-Host.
 func (s *DiameterServer) handleDPA(c diam.Conn, m *diam.Message) {
 	if s.peerManager == nil {
 		return
 	}
-	originHostAVP, err := m.FindAVP(avp.OriginHost, 0)
-	if err != nil {
-		return
+	if originHost := s.peerManager.HostOf(c); originHost != "" {
+		s.peerManager.RecordDPA(originHost)
 	}
-	originHost, ok := originHostAVP.Data.(datatype.DiameterIdentity)
-	if !ok {
-		return
-	}
-	s.peerManager.RecordDPA(string(originHost))
 }
 
 // admitGate wraps a forward-request handler with the per-peer token-bucket
