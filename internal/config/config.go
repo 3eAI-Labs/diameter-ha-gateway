@@ -19,13 +19,21 @@ type Config struct {
 }
 
 // ChargingConfig configures the Gx/Gy/Ro charging interfaces (TS 29.212/32.299).
-// Single CCR command code is dispatched by Service-Context-Id AVP.
+// A Gx CCR is recognised by its Application-Id; Gy and Ro share
+// Application-Id 4 and are told apart by Service-Context-Id.
 type ChargingConfig struct {
-	Enabled        bool     `mapstructure:"enabled"`
-	RequestTimeout string   `mapstructure:"request_timeout"`
-	GxContextIDs   []string `mapstructure:"gx_context_ids"` // Service-Context-Id values mapped to Gx
-	GyContextIDs   []string `mapstructure:"gy_context_ids"`
-	RoContextIDs   []string `mapstructure:"ro_context_ids"`
+	Enabled        bool   `mapstructure:"enabled"`
+	RequestTimeout string `mapstructure:"request_timeout"`
+	// GxContextIDs is ignored and kept so existing configuration still
+	// loads: TS 29.212 gives a Gx CCR no Service-Context-Id.
+	GxContextIDs []string `mapstructure:"gx_context_ids"`
+	// GyContextIDs and RoContextIDs list the Service-Context-Ids routed to
+	// Gy and Ro. An entry matches a CCR's Service-Context-Id exactly or by
+	// its "service-context"@"domain" part (TS 32.299 §7.1.12), so
+	// 32251@3gpp.org matches 17.32251@3gpp.org. Defaults: PS charging
+	// (32251) for Gy; IMS (32260) and MMTel (32275) charging for Ro.
+	GyContextIDs []string `mapstructure:"gy_context_ids"`
+	RoContextIDs []string `mapstructure:"ro_context_ids"`
 
 	// Gx interface-specific knobs (PCRF reverse direction).
 	Gx GxConfig `mapstructure:"gx"`
@@ -297,6 +305,12 @@ func Load() (*Config, error) {
 	}
 
 	// Charging defaults
+	if len(cfg.Charging.GyContextIDs) == 0 {
+		cfg.Charging.GyContextIDs = []string{"32251@3gpp.org"}
+	}
+	if len(cfg.Charging.RoContextIDs) == 0 {
+		cfg.Charging.RoContextIDs = []string{"32260@3gpp.org", "32275@3gpp.org"}
+	}
 	if cfg.Charging.RequestTimeout == "" {
 		cfg.Charging.RequestTimeout = "2s"
 	}

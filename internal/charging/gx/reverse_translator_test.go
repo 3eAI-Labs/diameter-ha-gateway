@@ -168,3 +168,15 @@ func findRawAVP(t *testing.T, m *diam.Message, code, vendorID uint32) *diam.AVP 
 	t.Fatalf("AVP not found: code=%d vendor=%d", code, vendorID)
 	return nil
 }
+
+// TestRARAndASR_Proxiable: both are "REQ, PXY" (RAR: TS 29.212 §5.6.4;
+// ASR: RFC 6733 §8.5.1); go-diameter's NewRequest set R only.
+func TestRARAndASR_Proxiable(t *testing.T) {
+	tr := NewTranslator()
+	rar := tr.CreateRAR("s", "pcef", "r", "gw", "r", &GxReAuthRequest{})
+	asr := tr.CreateASR("s", "pcef", "r", "gw", "r", &GxAbortSessionRequest{})
+	for _, m := range []*diam.Message{rar, asr} {
+		assert.Equal(t, uint8(diam.RequestFlag|diam.ProxiableFlag), m.Header.CommandFlags,
+			"command %d", m.Header.CommandCode)
+	}
+}

@@ -302,7 +302,8 @@ func (t *Translator) ToCCAMessage(answer *GxAnswer, req *diam.Message) (*diam.Me
 func (t *Translator) CreateRAR(sessionID, destHost, destRealm, originHost, originRealm string,
 	req *GxReAuthRequest) *diam.Message {
 
-	m := diam.NewRequest(CommandRAR, AppIDGx, nil)
+	// "REQ, PXY" (RAR: TS 29.212 §5.6.4; ASR: RFC 6733 §8.5.1); NewRequest sets R only.
+	m := diam.NewMessage(CommandRAR, diam.RequestFlag|diam.ProxiableFlag, AppIDGx, 0, 0, nil)
 	m.NewAVP(avp.SessionID, avp.Mbit, 0, datatype.UTF8String(sessionID))
 	m.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(originHost))
 	m.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(originRealm))
@@ -345,7 +346,8 @@ func (t *Translator) CreateRAR(sessionID, destHost, destRealm, originHost, origi
 func (t *Translator) CreateASR(sessionID, destHost, destRealm, originHost, originRealm string,
 	req *GxAbortSessionRequest) *diam.Message {
 
-	m := diam.NewRequest(CommandASR, AppIDGx, nil)
+	// "REQ, PXY" (RAR: TS 29.212 §5.6.4; ASR: RFC 6733 §8.5.1); NewRequest sets R only.
+	m := diam.NewMessage(CommandASR, diam.RequestFlag|diam.ProxiableFlag, AppIDGx, 0, 0, nil)
 	m.NewAVP(avp.SessionID, avp.Mbit, 0, datatype.UTF8String(sessionID))
 	m.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(originHost))
 	m.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(originRealm))

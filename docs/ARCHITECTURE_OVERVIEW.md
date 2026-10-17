@@ -12,7 +12,7 @@ request moves through it.
 | `cmd/diameter-gateway` | Start-up: configuration, NATS connection, peer manager, Diameter server, per-application handlers, admin API, metrics server, graceful shutdown. |
 | `internal/diameter` | Diameter server (go-diameter state machine), peer manager, peer authorisation, per-peer rate limiter, Redirect-Host cache, dictionaries, S6a/S13 translation and the Subscription-Data encoder. |
 | `internal/service` | S6a/S13 request handling towards NATS (`gateway.go`) and application-initiated S6a and Gx requests towards peers (`reverse.go`, `gx_reverse.go`). |
-| `internal/charging` | Gx, Gy and Ro: a dispatcher that routes a CCR by Service-Context-Id, one handler and translator per application, and the Gx session registry (Session-Id → PCEF). |
+| `internal/charging` | Gx, Gy and Ro: a dispatcher that routes a CCR by Application-Id and Service-Context-Id, one handler and translator per application, and the Gx session registry (Session-Id → PCEF). |
 | `internal/sms/sgd` | SGd (SMS over Diameter): handler for network requests, client for SMSC-initiated requests. |
 | `internal/nats` | Core NATS client with a circuit breaker and optional TLS. |
 | `internal/admin` | Admin HTTP API and the static admin UI, JWT authentication against a JWKS endpoint. |
@@ -39,15 +39,21 @@ MME ◄──ULA── server ◄── translator ◄────────�
 3. Missing mandatory AVPs are answered with 5005 and a Failed-AVP before anything reaches NATS.
 4. The request is translated to JSON and sent as a core NATS request. A timeout or an open circuit
    breaker answers 3002 (UNABLE_TO_DELIVER); a reply that cannot be encoded answers 5012.
-5. The reply is encoded into the answer. Session-Id, Origin-Host, Origin-Realm and, for S6a/S13,
-   Auth-Session-State are always set by the gateway. 3GPP result codes travel in
-   Experimental-Result.
+5. The reply is encoded into the answer. Session-Id, Origin-Host, Origin-Realm, the request's
+   Proxy-Info AVPs and, for S6a/S13, Auth-Session-State are always set by the gateway. 3GPP result
+   codes travel in Experimental-Result; a reply without a result code is answered 5012. A 3xxx
+   answer carries the E flag, and the gateway's answers clear the T flag.
+
+A request for a command the gateway does not serve is answered 3001 (COMMAND_UNSUPPORTED), one for
+a base command under an unknown application 3007 (APPLICATION_UNSUPPORTED).
 
 For Subscription-Data, every vendor-10415 AVP takes its code, type and M-bit from TS 29.272
 Table 7.3.1/1 (`ts29272_avps.go`), and a group missing a mandatory child is left out and logged.
 
-Gx, Gy and Ro share the CCR command code: the dispatcher picks the application from the
-Service-Context-Id. A Gx CCR-Initial or -Update binds its Session-Id to the PCEF it came from, and
+Gx, Gy and Ro share the CCR command code. The dispatcher recognises a Gx CCR by its Application-Id
+(16777238); Gy and Ro share Application-Id 4 and are told apart by Service-Context-Id
+(`charging.gy_context_ids`, `ro_context_ids`), matched with or without its release and operator
+prefix (TS 32.299 §7.1.12). A CCR missing a mandatory AVP is answered 5005. A Gx CCR-Initial or -Update binds its Session-Id to the PCEF it came from, and
 a CCR-Termination removes the binding, so a RAR or ASR from the PCRF can find the peer.
 
 ## Request from an application
@@ -63,12 +69,15 @@ application ◄──NATS reply──── ReverseService ◄──CLA── MM
    `diameter-gw`, so one replica handles each request.
 2. The target peer is named in the request (`header.source_host`) and must be connected to this
    replica; the request is sent over that peer's connection.
-3. The waiter is stored by Session-Id with the connection it was sent on; an answer arriving on
-   another connection is ignored.
+3. The request carries the P flag and a Session-Id of the form `<origin-host>;<high>;<low>;<kind>`
+   (RFC 6733 §8.8). The waiter is stored by Session-Id with the connection it was sent on; an
+   answer arriving on another connection is ignored, and an error answer without a Session-Id is
+   matched by its hop-by-hop identifier.
 4. A 3006 (REDIRECT_INDICATION) answer is followed to the Redirect-Host when the command's retry
    policy allows it: CLR, RSR and Gx RAR always, since applying them twice is harmless; IDR and
    Gx ASR only when the operator enables it (`redirect_idr_retry_enabled`,
-   `redirect_asr_retry_enabled`); other commands never. Retransmissions carry the T-bit.
+   `redirect_asr_retry_enabled`); other commands never. The redirected request is a new request
+   and carries no T-bit (RFC 6733 §3).
 5. The reply carries the peer's Result-Code or Experimental-Result-Code. A timeout
    (`reverse_timeout`) answers 3002; a peer that disconnects fails its waiters at once.
 

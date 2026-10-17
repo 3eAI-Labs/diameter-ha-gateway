@@ -131,12 +131,14 @@ func main() {
 			gxHandler,
 			gy.NewHandler(natsClient, peerManager, chargingTimeout),
 			ro.NewHandler(natsClient, peerManager, chargingTimeout),
-			cfg.Charging.GxContextIDs,
 			cfg.Charging.GyContextIDs,
 			cfg.Charging.RoContextIDs,
 			nil, // no default — unmatched Service-Context-Id rejected with 5012
 		).WithIdentity(cfg.Server.OriginHost, cfg.Server.OriginRealm)
 		server.SetChargingHandler(dispatcher)
+		if len(cfg.Charging.GxContextIDs) > 0 {
+			logger.Warn("charging.gx_context_ids is ignored: Gx CCRs are recognised by their Application-Id (16777238)")
+		}
 		logger.Info("Charging dispatcher enabled (Gx/Gy/Ro)",
 			logger.String("timeout", chargingTimeout.String()))
 

@@ -9,6 +9,65 @@ describes what changed for an installation of 0.9.4.
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-10-18
+
+Chart 0.3.0. Conformance release: Gx, Gy and Ro CCRs that follow the specifications are answered,
+and answers, CER handling and the requests the gateway sends follow RFC 6733. Before upgrading:
+
+- If you set `charging.gy_context_ids` or `ro_context_ids`, check that they hold the
+  Service-Context-Ids your network sends (3GPP: `32251@3gpp.org` for Gy, `32260@3gpp.org` and
+  `32275@3gpp.org` for Ro). If you left them at the shipped `ocs.diameter@3gpp.org` and
+  `ims-charging@3gpp.org`, remove them to take the new defaults, unless your network really sends
+  those values.
+- `charging.gx_context_ids` no longer has any effect.
+
+### Fixed
+
+- **Gx, Gy and Ro CCRs that follow the specifications are answered.** A Gx CCR carries no
+  Service-Context-Id (TS 29.212), and the gateway answered every one without it 5012; the gateway
+  now recognises a Gx CCR by its Application-Id (16777238). The default Gy and Ro
+  Service-Context-Ids, `ocs.diameter@3gpp.org` and `ims-charging@3gpp.org`, are not 3GPP values,
+  so every CCR carrying the 3GPP values was answered 5012. The defaults are now `32251@3gpp.org`
+  (Gy, PS charging) and `32260@3gpp.org` and `32275@3gpp.org` (Ro, IMS and MMTel charging), and an
+  entry also matches a Service-Context-Id with a release or operator prefix, such as
+  `17.32251@3gpp.org` (TS 32.299 §7.1.12).
+- **A CCR missing a mandatory AVP is answered 5005** (RFC 8506 §3.1) with a Failed-AVP. A Gy or Ro
+  CCR without CC-Request-Type was answered 2001; one without Service-Context-Id 5012.
+- **Requests the gateway sends carry the P flag.** CLR, IDR, DSR, RSR and Gx RAR and ASR are
+  proxiable (`REQ, PXY`); a Diameter agent between the gateway and the peer may refuse to relay a
+  request without the flag. SGd requests still lack it (SGd does not work; see Known limitations
+  in 0.10.3).
+- **Answers follow RFC 6733:**
+  - every Proxy-Info of the request is copied into the answer, in order (§6.2);
+  - a 3xxx answer carries the E flag (§7.1.3), and the answers the gateway builds no longer carry
+    the T flag (§3), which they copied from a retransmitted request; the CEA and DWA go-diameter
+    builds still copy it;
+  - an application reply without a result code is answered 5012 instead of producing an answer
+    with neither Result-Code nor Experimental-Result;
+  - a Failed-AVP for a missing AVP carries a zero value of the AVP's minimum length (§7.5), which a
+    peer can decode; it carried an empty value, which go-diameter itself could not decode;
+  - a request for a command the gateway does not serve is answered 3001 (COMMAND_UNSUPPORTED), one
+    for a base command under an application the gateway does not know 3007
+    (APPLICATION_UNSUPPORTED); both were left unanswered. A request whose command go-diameter does
+    not know for its Application-Id still fails to decode, and go-diameter closes the connection.
+- **CER checks.** A CER without Host-IP-Address, Vendor-Id or Product-Name is answered 5005; one
+  whose Vendor-Specific-Application-Id holds both an Auth- and an Acct-Application-Id 5009, and one
+  whose Vendor-Specific-Application-Id holds neither 5005 (RFC 6733 §5.3.1, §6.11). Each answer
+  carries a Failed-AVP, and the connection is closed. All were accepted with 2001.
+- **An error answer without a Session-Id reaches the application.** The answer to a request the
+  gateway sent is matched by its hop-by-hop identifier when it has no Session-Id (RFC 6733 §7.2);
+  it was dropped, and the application waited for `reverse_timeout`.
+- **A redirected request carries no T flag.** It follows an error answer (3006), after which RFC
+  6733 §3 forbids the flag. The `diameter_tbit_retransmit_total` metric is removed.
+
+### Changed
+
+- **Session-Ids of gateway-initiated requests** take the RFC 6733 §8.8 form
+  `<origin-host>;<high 32 bits>;<low 32 bits>;<kind>`. They began with the subscriber's IMSI, which
+  every log line carrying the Session-Id then revealed despite IMSI masking.
+- **`charging.gx_context_ids` is ignored** and logged at start-up when set; the key still loads
+  and validates.
+
 ## [0.10.3] — 2026-10-17
 
 Security release; chart 0.2.3. Every installation of 0.10.0–0.10.2 should upgrade. Before
@@ -169,7 +228,8 @@ No change to the gateway's behaviour, configuration or NATS contract.
 See the [README](README.md#known-limitations). New in this release: gateway-initiated requests
 reach directly connected peers only, a consequence of binding identities to connections.
 
-[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.3...HEAD
+[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.3...v0.11.0
 [0.10.3]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.2...v0.10.3
 [0.10.2]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.0...v0.10.1

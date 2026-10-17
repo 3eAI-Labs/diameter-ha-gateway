@@ -36,15 +36,15 @@ applications are not checked against their specifications yet (see
 - **Requests from the network** are published as a NATS request on `diameter.<app>.<cmd>`
   (`diameter.s6a.ulr`, `diameter.gx.ccr`, …); the application's reply becomes the Diameter answer.
   Gx, Gy and Ro CCRs share one command code; the gateway picks the subject from the
-  Service-Context-Id.
+  Application-Id (Gx) and the Service-Context-Id (Gy: `32251@3gpp.org`; Ro: `32260@3gpp.org`,
+  `32275@3gpp.org` by default).
 - **Requests from an application** are NATS requests to the gateway (`diameter.s6a.idr`,
   `diameter.gx.rar`, `diameter.sgd.tfr.request`, …). The gateway sends the Diameter request to the
   peer the application names and replies with the peer's result.
 - **Base protocol (RFC 6733):** capabilities exchange with a peer whitelist (source IP and
   Origin-Host), watchdog (DWR/DWA), disconnect (DPR/DPA) and drain on shutdown, Failed-AVP on
-  missing mandatory AVPs, Redirect-Host handling with a per-command retry policy, T-bit on
-  retransmission, per-peer rate limiting (3004 TOO_BUSY), idle-peer cleanup, TLS with optional
-  client certificates.
+  missing mandatory AVPs, Redirect-Host handling with a per-command retry policy, per-peer rate
+  limiting (3004 TOO_BUSY), idle-peer cleanup, TLS with optional client certificates.
 - **Scaling:** the gateway keeps no subscriber state. Replicas subscribe with NATS queue groups, so
   each application-initiated request is handled once.
 - **Admin API and UI** on the admin port: `GET /api/admin/v1/peers`, `POST /api/admin/v1/config/reload`

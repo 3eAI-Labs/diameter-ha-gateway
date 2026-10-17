@@ -4,6 +4,9 @@
 package charging
 
 import (
+	"strings"
+
+	pb "github.com/3eAI-Labs/diameter-ha-gateway-client"
 	"github.com/3eAI-Labs/diameter-ha-gateway/internal/diameter"
 	"github.com/3eAI-Labs/diameter-ha-gateway/internal/platform/logger"
 	"github.com/3eAI-Labs/diameter-ha-gateway/internal/platform/monitor"
@@ -18,16 +21,16 @@ type CCRHandler interface {
 	HandleCCR(c diam.Conn, m *diam.Message)
 }
 
-// Dispatcher routes incoming CCR messages to the right interface handler
-// by inspecting the Service-Context-Id AVP. Necessary because Gx, Gy and Ro
-// share Command-Code 272 (Gx under Application-Id 16777238, Gy and Ro under
-// 4) and go-diameter dispatches by command — the gateway can host all three
-// concurrently and only this AVP discriminates the semantics.
+// Dispatcher routes incoming CCR messages to the right interface handler.
+// Gx, Gy and Ro share Command-Code 272, and go-diameter dispatches by
+// command. A Gx CCR is recognised by its Application-Id (16777238, TS 29.212
+// §5.6); TS 29.212 gives it no Service-Context-Id. Gy and Ro share
+// Application-Id 4 (RFC 8506), and their mandatory Service-Context-Id
+// (TS 32.299 §7.1.12) tells them apart.
 type Dispatcher struct {
 	gx          CCRHandler
 	gy          CCRHandler
 	ro          CCRHandler
-	gxContexts  map[string]struct{}
 	gyContexts  map[string]struct{}
 	roContexts  map[string]struct{}
 	defaultDest CCRHandler // optional; nil → reject 5012 if no match
@@ -42,15 +45,15 @@ func (d *Dispatcher) WithIdentity(originHost, originRealm string) *Dispatcher {
 	return d
 }
 
-// NewDispatcher wires the per-interface handlers and the Service-Context-Id
-// allow-lists from configuration. defaultDest is used when none of the lists
-// match; pass nil to reject unknown contexts with 5012 (UNABLE_TO_COMPLY).
-func NewDispatcher(gx, gy, ro CCRHandler, gxIDs, gyIDs, roIDs []string, defaultDest CCRHandler) *Dispatcher {
+// NewDispatcher wires the per-interface handlers and the Gy and Ro
+// Service-Context-Id lists from configuration. defaultDest is used for an
+// application-4 CCR that neither list matches; pass nil to reject it with
+// 5012 (UNABLE_TO_COMPLY).
+func NewDispatcher(gx, gy, ro CCRHandler, gyIDs, roIDs []string, defaultDest CCRHandler) *Dispatcher {
 	return &Dispatcher{
 		gx:          gx,
 		gy:          gy,
 		ro:          ro,
-		gxContexts:  toSet(gxIDs),
 		gyContexts:  toSet(gyIDs),
 		roContexts:  toSet(roIDs),
 		defaultDest: defaultDest,
@@ -69,23 +72,38 @@ func toSet(ids []string) map[string]struct{} {
 
 // HandleCCR satisfies the diameter.ChargingHandler contract.
 func (d *Dispatcher) HandleCCR(c diam.Conn, m *diam.Message) {
+	if missing := diameter.ValidateMandatoryAVPs(m); len(missing) > 0 {
+		logger.Warn("CCR missing mandatory AVPs; answering 5005", logger.Int("missing", len(missing)))
+		monitor.IncrementCounter("diameter_charging_dispatch_total", map[string]string{"interface": "missing"})
+		d.rejectMissing(c, m, missing)
+		return
+	}
+	if m.Header.ApplicationID == AppIDGx {
+		if d.gx == nil {
+			monitor.IncrementCounter("diameter_charging_dispatch_total", map[string]string{"interface": "unmatched"})
+			d.reject(c, m, diam.ApplicationUnsupported)
+			return
+		}
+		monitor.IncrementCounter("diameter_charging_dispatch_total", map[string]string{"interface": "gx"})
+		d.gx.HandleCCR(c, m)
+		return
+	}
+
 	scidAVP, err := m.FindAVP(avp.ServiceContextID, 0)
 	if err != nil {
-		logger.Warn("CCR missing Service-Context-Id; cannot dispatch")
+		logger.Warn("CCR missing Service-Context-Id; answering 5005")
 		monitor.IncrementCounter("diameter_charging_dispatch_total", map[string]string{"interface": "missing"})
-		d.reject(c, m)
+		// Mandatory in a Gy or Ro CCR (RFC 8506 §3.1).
+		d.rejectMissing(c, m, []pb.FailedAVPEntry{{Code: avp.ServiceContextID}})
 		return
 	}
 	scid := diameter.AVPString(scidAVP)
 
 	switch {
-	case d.gx != nil && d.contains(d.gxContexts, scid):
-		monitor.IncrementCounter("diameter_charging_dispatch_total", map[string]string{"interface": "gx"})
-		d.gx.HandleCCR(c, m)
-	case d.gy != nil && d.contains(d.gyContexts, scid):
+	case d.gy != nil && matchesContext(d.gyContexts, scid):
 		monitor.IncrementCounter("diameter_charging_dispatch_total", map[string]string{"interface": "gy"})
 		d.gy.HandleCCR(c, m)
-	case d.ro != nil && d.contains(d.roContexts, scid):
+	case d.ro != nil && matchesContext(d.roContexts, scid):
 		monitor.IncrementCounter("diameter_charging_dispatch_total", map[string]string{"interface": "ro"})
 		d.ro.HandleCCR(c, m)
 	case d.defaultDest != nil:
@@ -95,19 +113,45 @@ func (d *Dispatcher) HandleCCR(c diam.Conn, m *diam.Message) {
 		logger.Warn("CCR Service-Context-Id matched no configured interface",
 			logger.String("service_context_id", scid))
 		monitor.IncrementCounter("diameter_charging_dispatch_total", map[string]string{"interface": "unmatched"})
-		d.reject(c, m)
+		d.reject(c, m, diam.UnableToComply)
 	}
 }
 
-func (d *Dispatcher) contains(set map[string]struct{}, scid string) bool {
-	_, ok := set[scid]
+// matchesContext reports whether scid is in set, either as it is or by its
+// "service-context"@"domain" part. TS 32.299 §7.1.12 gives a
+// Service-Context-Id the form
+// "extensions".MNC.MCC."Release"."service-context"@"domain", of which only
+// "Release"."service-context"@"domain" is required, so 17.32251@3gpp.org and
+// 001.01.17.32251@3gpp.org both match a configured 32251@3gpp.org.
+func matchesContext(set map[string]struct{}, scid string) bool {
+	if _, ok := set[scid]; ok {
+		return true
+	}
+	at := strings.LastIndexByte(scid, '@')
+	if at < 0 {
+		return false
+	}
+	dot := strings.LastIndexByte(scid[:at], '.')
+	if dot < 0 {
+		return false
+	}
+	_, ok := set[scid[dot+1:]]
 	return ok
 }
 
-func (d *Dispatcher) reject(c diam.Conn, m *diam.Message) {
-	// 5012 DIAMETER_UNABLE_TO_COMPLY per BUSINESS_EXCEPTION_CODES (gateway can
-	// not route the request to any backend). Stateless: no NATS publish.
-	ans := diameter.CompleteAnswer(m.Answer(uint32(diam.UnableToComply)), m, d.originHost, d.originRealm)
+func (d *Dispatcher) reject(c diam.Conn, m *diam.Message, resultCode uint32) {
+	// Stateless: no NATS publish.
+	ans := diameter.CompleteAnswer(m.Answer(resultCode), m, d.originHost, d.originRealm)
+	if _, err := ans.WriteTo(c); err != nil {
+		logger.Error("Failed to send dispatcher rejection answer", err)
+	}
+}
+
+// rejectMissing answers 5005 (DIAMETER_MISSING_AVP) with a Failed-AVP
+// naming each missing AVP (RFC 6733 §7.5).
+func (d *Dispatcher) rejectMissing(c diam.Conn, m *diam.Message, missing []pb.FailedAVPEntry) {
+	ans := diameter.BuildMissingAVPAnswer(m, d.originHost, d.originRealm, missing)
+	ans = diameter.CompleteAnswer(ans, m, d.originHost, d.originRealm)
 	if _, err := ans.WriteTo(c); err != nil {
 		logger.Error("Failed to send dispatcher rejection answer", err)
 	}

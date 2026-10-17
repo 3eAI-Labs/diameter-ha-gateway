@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"net"
+	"sync/atomic"
 	"time"
 
 	pb "github.com/3eAI-Labs/diameter-ha-gateway-client"
@@ -309,16 +311,36 @@ func (t *Translator) CreateErrorAnswer(m *diam.Message, resultCode uint32) (*dia
 // uniqueSessionID builds a Session-Id that is unique even when the same IMSI
 // is targeted by multiple in-flight reverse requests. Format: {imsi}-{kind}-{nano}.
 // A plain {imsi}-cl would collide when two CLRs for the same subscriber overlap.
-func uniqueSessionID(imsi, kind string) string {
-	return fmt.Sprintf("%s-%s-%d", imsi, kind, time.Now().UnixNano())
+// newProxiableRequest returns a request with the R and P flags set. The S6a
+// commands the gateway sends are all "REQ, PXY" in their Command Code Format
+// (TS 29.272 §7.2), and a Diameter agent may refuse to relay a request
+// without the P flag (RFC 6733 §3). go-diameter's NewRequest sets R only.
+func newProxiableRequest(code, appID uint32) *diam.Message {
+	return diam.NewMessage(code, diam.RequestFlag|diam.ProxiableFlag, appID, 0, 0, nil)
+}
+
+// Session-Ids of the requests the gateway originates take the RFC 6733 §8.8
+// form "<Origin-Host>;<high 32 bits>;<low 32 bits>;<kind>": the high part is
+// the process start time, the low part a counter started at a random value,
+// which makes a collision between two replicas sharing an Origin-Host and
+// started in the same second unlikely; it is not guaranteed. They carry no IMSI, so logging one reveals no subscriber.
+var (
+	sessionIDHigh = uint32(time.Now().Unix())
+	sessionIDLow  atomic.Uint32
+)
+
+func init() { sessionIDLow.Store(rand.Uint32()) }
+
+func uniqueSessionID(originHost, kind string) string {
+	return fmt.Sprintf("%s;%d;%d;%s", originHost, sessionIDHigh, sessionIDLow.Add(1), kind)
 }
 
 // CreateCLR builds a Cancel-Location-Request (TS 29.272 §6.1.1).
 // Returns the message and the generated Session-Id so the caller can register
 // in pendingReqs without re-extracting the AVP.
 func (t *Translator) CreateCLR(imsi, destHost, destRealm, originHost, originRealm string) (*diam.Message, string) {
-	sid := uniqueSessionID(imsi, "cl")
-	m := diam.NewRequest(317, 16777251, nil)
+	sid := uniqueSessionID(originHost, "cl")
+	m := newProxiableRequest(317, 16777251)
 	m.NewAVP(avp.SessionID, avp.Mbit, 0, datatype.UTF8String(sid))
 	m.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(originHost))
 	m.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(originRealm))
@@ -371,6 +393,7 @@ func (t *Translator) CreateDPR(originHost, originRealm string, disconnectCause u
 // own DPR timeout and treat the disconnect as ungraceful (RFC §5.4.3).
 func (t *Translator) CreateDPA(req *diam.Message, originHost, originRealm string) *diam.Message {
 	a := req.Answer(diam.Success)
+	a.Header.CommandFlags &^= diam.RetransmittedFlag // Answer copies it; RFC 6733 §3
 	a.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(originHost))
 	a.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(originRealm))
 	return a
@@ -382,12 +405,8 @@ func (t *Translator) CreateDPA(req *diam.Message, originHost, originRealm string
 // one. With `imsiPrefix` empty the RSR carries no User-Id and covers every
 // subscriber the MME holds from this HSS. The RSR has no User-Name.
 func (t *Translator) CreateRSR(imsiPrefix, destHost, destRealm, originHost, originRealm string) (*diam.Message, string) {
-	keyForSid := imsiPrefix
-	if keyForSid == "" {
-		keyForSid = "broadcast"
-	}
-	sid := uniqueSessionID(keyForSid, "rs")
-	m := diam.NewRequest(322, 16777251, nil)
+	sid := uniqueSessionID(originHost, "rs")
+	m := newProxiableRequest(322, 16777251)
 	m.NewAVP(avp.SessionID, avp.Mbit, 0, datatype.UTF8String(sid))
 	m.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(originHost))
 	m.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(originRealm))
@@ -407,8 +426,8 @@ func (t *Translator) CreateRSR(imsiPrefix, destHost, destRealm, originHost, orig
 // alone" (e.g. CompleteAPNConfigurationProfileWithdrawal bit removes all).
 func (t *Translator) CreateDSR(imsi, destHost, destRealm, originHost, originRealm string,
 	dsrFlags uint32, contextIDs []uint32) (*diam.Message, string) {
-	sid := uniqueSessionID(imsi, "ds")
-	m := diam.NewRequest(320, 16777251, nil)
+	sid := uniqueSessionID(originHost, "ds")
+	m := newProxiableRequest(320, 16777251)
 	m.NewAVP(avp.SessionID, avp.Mbit, 0, datatype.UTF8String(sid))
 	m.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(originHost))
 	m.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(originRealm))
@@ -433,8 +452,8 @@ func (t *Translator) CreateDSR(imsi, destHost, destRealm, originHost, originReal
 // per TS 29.272 §7.3.103).
 func (t *Translator) CreateIDR(imsi, destHost, destRealm, originHost, originRealm string,
 	subProfile *pb.SubscriptionProfile, subscriberData string, idrFlags uint32) (*diam.Message, string) {
-	sid := uniqueSessionID(imsi, "id")
-	m := diam.NewRequest(319, 16777251, nil)
+	sid := uniqueSessionID(originHost, "id")
+	m := newProxiableRequest(319, 16777251)
 	m.NewAVP(avp.SessionID, avp.Mbit, 0, datatype.UTF8String(sid))
 	m.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(originHost))
 	m.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(originRealm))
@@ -549,22 +568,6 @@ func (t *Translator) ToDiameterAnswer(respData []byte, req *diam.Message) (*diam
 	}
 
 	return ans, nil
-}
-
-// SetTBit marks a Diameter request as a retransmission (RFC 6733 §3 +
-// §6.1.1, T-bit at Command Flags bit 4). Set this on every request that is
-// a duplicate of a previously-sent request — the receiving peer uses it to
-// run duplicate detection. Used by the reverse-path redirect retry (the
-// second hop after 3006, RFC 6733 §6.5) and any failover-driven retransmit
-// (RFC 6733 §5.5.4). No-op when called on an answer message.
-func (t *Translator) SetTBit(m *diam.Message) {
-	if m == nil {
-		return
-	}
-	m.Header.CommandFlags |= diam.RetransmittedFlag
-	monitor.IncrementCounter("diameter_tbit_retransmit_total", map[string]string{
-		"cmd": fmt.Sprintf("%d", m.Header.CommandCode),
-	})
 }
 
 // applyRedirectAVPs encodes the §6.5 redirect indication onto an answer

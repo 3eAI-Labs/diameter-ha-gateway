@@ -334,8 +334,13 @@ func TestCreateCLR(t *testing.T) {
 		"origin.3gppnetwork.org",
 	)
 
-	// Session-Id includes IMSI prefix and unique nano-suffix.
-	assert.Contains(t, sid, "286011234567890-cl-")
+	// RFC 6733 §8.8: <DiameterIdentity>;<high 32 bits>;<low 32 bits>[;<optional>],
+	// beginning with the sender's identity and carrying no IMSI.
+	assert.Regexp(t, `^hss\.origin\.3gppnetwork\.org;[0-9]+;[0-9]+;cl$`, sid)
+	assert.NotContains(t, sid, "286011234567890")
+	_, other := NewTranslator().CreateCLR("286011234567890", "mme.dest.3gppnetwork.org",
+		"dest.3gppnetwork.org", "hss.origin.3gppnetwork.org", "origin.3gppnetwork.org")
+	assert.NotEqual(t, sid, other, "Session-Ids are unique across translators")
 
 	// Verify message structure
 	assert.Equal(t, uint32(317), msg.Header.CommandCode)
@@ -463,7 +468,7 @@ func TestCreateRSR_BroadcastModeOmitsUserID(t *testing.T) {
 	// No IMSI prefix: the RSR covers every subscriber (TS 29.272 §7.2.15).
 	m, sid := tr.CreateRSR("", "mme.x", "x", "gw.x", "x")
 
-	assert.Contains(t, sid, "broadcast-rs-")
+	assert.Regexp(t, `^gw\.x;[0-9]+;[0-9]+;rs$`, sid)
 	assert.Equal(t, uint32(322), m.Header.CommandCode)
 	_, err := m.FindAVP(avpUserID, 10415)
 	assert.Error(t, err, "broadcast RSR must not carry User-Id")
@@ -475,7 +480,7 @@ func TestCreateRSR_UserID(t *testing.T) {
 	tr := NewTranslator()
 	m, sid := tr.CreateRSR("28601", "mme.x", "x", "gw.x", "x")
 
-	assert.Contains(t, sid, "28601-rs-")
+	assert.Regexp(t, `^gw\.x;[0-9]+;[0-9]+;rs$`, sid)
 	uid, err := m.FindAVP(avpUserID, 10415)
 	require.NoError(t, err)
 	assert.Equal(t, octets(t, "000005a4 80 000011 000028af 3238363031000000"), serialized(t, uid)) // "28601" + padding
@@ -828,7 +833,7 @@ func TestCreateDSR_FullScope(t *testing.T) {
 		[]uint32{1, 5}, // scope withdrawal to APN ContextIDs 1 and 5
 	)
 
-	assert.Contains(t, sid, "286011234567890-ds-")
+	assert.Regexp(t, `^gw\.origin\.example\.com;[0-9]+;[0-9]+;ds$`, sid)
 	assert.Equal(t, uint32(320), m.Header.CommandCode)
 	assert.Equal(t, uint32(16777251), m.Header.ApplicationID)
 
@@ -1031,36 +1036,6 @@ func TestToDiameterAnswer_NoRedirectFields_IsClean(t *testing.T) {
 	require.NoError(t, err)
 	hosts, _ := ans.FindAVPs(avp.RedirectHost, 0)
 	assert.Empty(t, hosts, "non-redirect answers must not emit Redirect-Host AVPs")
-}
-
-// TestSetTBit_SetsRetransmittedFlag guards the T-bit wire encoding for
-// the reverse-path redirect retry and failover retransmit. Bit 4 of Command
-// Flags MUST be set after SetTBit; round-trip through ReadMessage so we
-// catch any header-codec regression.
-func TestSetTBit_SetsRetransmittedFlag(t *testing.T) {
-	tr := NewTranslator()
-	req, _ := tr.CreateCLR("001010000000001",
-		"mme.example.org", "epc.example.org",
-		"gw.example.org", "gw.example.org")
-
-	require.False(t, req.Header.CommandFlags&diam.RetransmittedFlag != 0,
-		"new request must not have T-bit set")
-	tr.SetTBit(req)
-	assert.True(t, req.Header.CommandFlags&diam.RetransmittedFlag != 0,
-		"after SetTBit the RetransmittedFlag bit must be on")
-
-	// Wire round-trip — ensure the flag survives encode/decode.
-	var buf bytes.Buffer
-	_, err := req.WriteTo(&buf)
-	require.NoError(t, err)
-	decoded, err := diam.ReadMessage(&buf, dict.Default)
-	require.NoError(t, err)
-	assert.True(t, decoded.Header.CommandFlags&diam.RetransmittedFlag != 0,
-		"T-bit MUST round-trip through wire codec")
-}
-
-func TestSetTBit_NilSafe(t *testing.T) {
-	NewTranslator().SetTBit(nil) // must not panic
 }
 
 func TestToDiameterAnswer_UnknownCommand(t *testing.T) {

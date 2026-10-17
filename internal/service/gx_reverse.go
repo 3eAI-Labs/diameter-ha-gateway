@@ -48,7 +48,6 @@ type GxReverseService struct {
 	natsClient    *internalNats.Client
 	peerManager   *diameter.PeerManager
 	gxTranslator  *gx.Translator
-	corTranslator *diameter.Translator // for SetTBit (RFC §3 retransmit marker)
 	registry      *gx.GxSessionRegistry
 	redirectCache *diameter.RedirectCache // shared with S6a reverse path
 
@@ -67,6 +66,7 @@ type gxPendingReq struct {
 	peerHost string
 	verb     string    // "RAR" / "ASR" — for metrics on drop
 	conn     diam.Conn // only an answer arriving on this connection is delivered
+	hopByHop uint32    // identifies the request on conn, for an answer without Session-Id
 }
 
 // NewGxReverseService wires up the service and registers a peer-drop
@@ -88,7 +88,6 @@ func NewGxReverseService(
 		natsClient:    nc,
 		peerManager:   pm,
 		gxTranslator:  gx.NewTranslator(),
-		corTranslator: diameter.NewTranslator(),
 		registry:      registry,
 		redirectCache: redirectCache,
 		cfg:           cfg,
@@ -252,14 +251,13 @@ func (s *GxReverseService) executeGxHop(
 	}
 	diamMsg := build(destRealm)
 
-	// T-bit on every hop beyond the first (RFC 6733 §3 + §6.1.1).
-	if state.depth > 0 {
-		s.corTranslator.SetTBit(diamMsg)
-	}
+	// No T flag on a redirect hop: it follows an error answer (3006), after
+	// which RFC 6733 §3 forbids it.
 
 	respCh := make(chan *diam.Message, 1)
 	s.mu.Lock()
-	s.pendingReqs[sessionID] = &gxPendingReq{ch: respCh, peerHost: destHost, verb: cmd, conn: conn}
+	s.pendingReqs[sessionID] = &gxPendingReq{ch: respCh, peerHost: destHost, verb: cmd, conn: conn,
+		hopByHop: diamMsg.Header.HopByHopID}
 	s.mu.Unlock()
 
 	logger.Info(fmt.Sprintf("Sending %s to PCEF", cmd),
@@ -403,16 +401,8 @@ func (s *GxReverseService) HandleRAA(c diam.Conn, m *diam.Message) { s.deliverAn
 func (s *GxReverseService) HandleASA(c diam.Conn, m *diam.Message) { s.deliverAnswer(c, m) }
 
 func (s *GxReverseService) deliverAnswer(c diam.Conn, m *diam.Message) {
-	sidAVP, err := m.FindAVP(avp.SessionID, 0)
-	if err != nil {
-		return
-	}
-	sessionID := avpStringValue(sidAVP)
-
-	s.mu.RLock()
-	pr, exists := s.pendingReqs[sessionID]
-	s.mu.RUnlock()
-	if !exists {
+	sessionID, pr := s.pendingFor(c, m)
+	if pr == nil {
 		return
 	}
 	if pr.conn != c {
@@ -425,6 +415,23 @@ func (s *GxReverseService) deliverAnswer(c diam.Conn, m *diam.Message) {
 	default:
 	}
 	s.removePending(sessionID)
+}
+
+// pendingFor finds the request m answers: by its Session-Id or, for an
+// answer without one (RFC 6733 §7.2), by its hop-by-hop identifier on c.
+func (s *GxReverseService) pendingFor(c diam.Conn, m *diam.Message) (string, *gxPendingReq) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if sidAVP, err := m.FindAVP(avp.SessionID, 0); err == nil {
+		sid := avpStringValue(sidAVP)
+		return sid, s.pendingReqs[sid]
+	}
+	for sid, pr := range s.pendingReqs {
+		if pr.conn == c && pr.hopByHop == m.Header.HopByHopID {
+			return sid, pr
+		}
+	}
+	return "", nil
 }
 
 func (s *GxReverseService) removePending(sid string) {

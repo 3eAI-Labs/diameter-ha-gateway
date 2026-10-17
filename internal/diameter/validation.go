@@ -4,6 +4,8 @@
 package diameter
 
 import (
+	"strings"
+
 	pb "github.com/3eAI-Labs/diameter-ha-gateway-client"
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/avp"
@@ -16,6 +18,11 @@ type avpKey struct {
 	Code     uint32
 	VendorID uint32
 	Name     string // for Failed-AVP entry; not used for matching
+	// Size is the minimum length of the AVP's value in octets: 4 for an
+	// Unsigned32 or Enumerated, 3 for a PLMN-Id, 0 for a string or Grouped.
+	// The Failed-AVP of a missing AVP carries a zero value of that length
+	// (RFC 6733 §7.5), which a peer can decode with the AVP's own type.
+	Size int
 }
 
 // mandatoryAVPsByCommand is the per-S6a/S13-command minimum-AVP set per
@@ -31,56 +38,68 @@ type avpKey struct {
 var mandatoryAVPsByCommand = map[uint32][]avpKey{
 	// 316 ULR — TS 29.272 §5.2.1.1.2
 	316: {
-		{avp.SessionID, 0, "Session-Id"},
-		{avp.OriginHost, 0, "Origin-Host"},
-		{avp.OriginRealm, 0, "Origin-Realm"},
-		{avp.DestinationRealm, 0, "Destination-Realm"},
-		{avp.AuthSessionState, 0, "Auth-Session-State"},
-		{avp.UserName, 0, "User-Name"},
-		{avp.RATType, 10415, "RAT-Type"},
-		{avp.ULRFlags, 10415, "ULR-Flags"},
-		{avp.VisitedPLMNID, 10415, "Visited-PLMN-Id"},
+		{avp.SessionID, 0, "Session-Id", 0},
+		{avp.OriginHost, 0, "Origin-Host", 0},
+		{avp.OriginRealm, 0, "Origin-Realm", 0},
+		{avp.DestinationRealm, 0, "Destination-Realm", 0},
+		{avp.AuthSessionState, 0, "Auth-Session-State", 4},
+		{avp.UserName, 0, "User-Name", 0},
+		{avp.RATType, 10415, "RAT-Type", 4},
+		{avp.ULRFlags, 10415, "ULR-Flags", 4},
+		{avp.VisitedPLMNID, 10415, "Visited-PLMN-Id", 3},
 	},
 	// 318 AIR — TS 29.272 §5.2.1.2.2 (Visited-PLMN-Id mandatory; one of
 	// the Auth-Info request AVPs SHOULD be present but ABNF doesn't make
 	// it mandatory — leave to backend).
 	318: {
-		{avp.SessionID, 0, "Session-Id"},
-		{avp.OriginHost, 0, "Origin-Host"},
-		{avp.OriginRealm, 0, "Origin-Realm"},
-		{avp.DestinationRealm, 0, "Destination-Realm"},
-		{avp.AuthSessionState, 0, "Auth-Session-State"},
-		{avp.UserName, 0, "User-Name"},
-		{avp.VisitedPLMNID, 10415, "Visited-PLMN-Id"},
+		{avp.SessionID, 0, "Session-Id", 0},
+		{avp.OriginHost, 0, "Origin-Host", 0},
+		{avp.OriginRealm, 0, "Origin-Realm", 0},
+		{avp.DestinationRealm, 0, "Destination-Realm", 0},
+		{avp.AuthSessionState, 0, "Auth-Session-State", 4},
+		{avp.UserName, 0, "User-Name", 0},
+		{avp.VisitedPLMNID, 10415, "Visited-PLMN-Id", 3},
 	},
 	// 321 PUR — TS 29.272 §5.2.1.5.2
 	321: {
-		{avp.SessionID, 0, "Session-Id"},
-		{avp.OriginHost, 0, "Origin-Host"},
-		{avp.OriginRealm, 0, "Origin-Realm"},
-		{avp.DestinationRealm, 0, "Destination-Realm"},
-		{avp.AuthSessionState, 0, "Auth-Session-State"},
-		{avp.UserName, 0, "User-Name"},
+		{avp.SessionID, 0, "Session-Id", 0},
+		{avp.OriginHost, 0, "Origin-Host", 0},
+		{avp.OriginRealm, 0, "Origin-Realm", 0},
+		{avp.DestinationRealm, 0, "Destination-Realm", 0},
+		{avp.AuthSessionState, 0, "Auth-Session-State", 4},
+		{avp.UserName, 0, "User-Name", 0},
 	},
 	// 323 NOR — TS 29.272 §5.2.1.7.2
 	323: {
-		{avp.SessionID, 0, "Session-Id"},
-		{avp.OriginHost, 0, "Origin-Host"},
-		{avp.OriginRealm, 0, "Origin-Realm"},
-		{avp.DestinationRealm, 0, "Destination-Realm"},
-		{avp.AuthSessionState, 0, "Auth-Session-State"},
-		{avp.UserName, 0, "User-Name"},
+		{avp.SessionID, 0, "Session-Id", 0},
+		{avp.OriginHost, 0, "Origin-Host", 0},
+		{avp.OriginRealm, 0, "Origin-Realm", 0},
+		{avp.DestinationRealm, 0, "Destination-Realm", 0},
+		{avp.AuthSessionState, 0, "Auth-Session-State", 4},
+		{avp.UserName, 0, "User-Name", 0},
+	},
+	// 272 CCR — RFC 8506 §3.1 (Gy, Ro) and TS 29.212 §5.6.2 (Gx). The
+	// Service-Context-Id Gy and Ro also require is checked by the charging
+	// dispatcher, which needs it to route the CCR.
+	272: {
+		{avp.SessionID, 0, "Session-Id", 0},
+		{avp.OriginHost, 0, "Origin-Host", 0},
+		{avp.OriginRealm, 0, "Origin-Realm", 0},
+		{avp.DestinationRealm, 0, "Destination-Realm", 0},
+		{avp.AuthApplicationID, 0, "Auth-Application-Id", 4},
+		{avp.CCRequestType, 0, "CC-Request-Type", 4},
+		{avp.CCRequestNumber, 0, "CC-Request-Number", 4},
 	},
 	// 324 ECR (S13) — TS 29.272 §5.2.2.1.2 (User-Name optional; Terminal-
 	// Information mandatory but is itself a Grouped AVP — checking presence
 	// at top level is enough).
 	324: {
-		{avp.SessionID, 0, "Session-Id"},
-		{avp.OriginHost, 0, "Origin-Host"},
-		{avp.OriginRealm, 0, "Origin-Realm"},
-		{avp.DestinationRealm, 0, "Destination-Realm"},
-		{avp.AuthSessionState, 0, "Auth-Session-State"},
-		{avp.TerminalInformation, 10415, "Terminal-Information"},
+		{avp.SessionID, 0, "Session-Id", 0},
+		{avp.OriginHost, 0, "Origin-Host", 0},
+		{avp.OriginRealm, 0, "Origin-Realm", 0},
+		{avp.DestinationRealm, 0, "Destination-Realm", 0},
+		{avp.AuthSessionState, 0, "Auth-Session-State", 4},
+		{avp.TerminalInformation, 10415, "Terminal-Information", 0},
 	},
 }
 
@@ -111,8 +130,7 @@ func ValidateMandatoryAVPs(m *diam.Message) []pb.FailedAVPEntry {
 			missing = append(missing, pb.FailedAVPEntry{
 				Code:     want.Code,
 				VendorID: want.VendorID,
-				// Empty Value — peer learns the missing AVP code (the part
-				// they need to fix); we have no original bytes to echo.
+				Value:    strings.Repeat("00", want.Size),
 			})
 		}
 	}

@@ -73,17 +73,20 @@ sgd:
   enabled: true
   request_timeout: 2s
 
-# Charging interfaces (Gx / Gy / Ro) — share Cmd-Code 272 / App-Id 4.
-# Service-Context-Id discriminates which downstream NATS topic gets the publish.
+# Charging interfaces (Gx / Gy / Ro) share Cmd-Code 272. Gx is App-Id 16777238;
+# Gy and Ro share App-Id 4 and are told apart by Service-Context-Id.
 charging:
   enabled: true
   request_timeout: 2s
-  gx_context_ids:
-    - "pcrf@3gpp.org"
+  # Service-Context-Ids routed to Gy and Ro (TS 32.299 §7.1.12). An entry also
+  # matches the same context with a release or operator prefix:
+  # 32251@3gpp.org matches 17.32251@3gpp.org. Gx CCRs are recognised by their
+  # Application-Id and need no entry.
   gy_context_ids:
-    - "ocs.diameter@3gpp.org"
+    - "32251@3gpp.org"   # PS charging
   ro_context_ids:
-    - "ims-charging@3gpp.org"
+    - "32260@3gpp.org"   # IMS charging
+    - "32275@3gpp.org"   # MMTel charging
 
   # Gx-specific knobs (PCRF reverse direction).
   gx:

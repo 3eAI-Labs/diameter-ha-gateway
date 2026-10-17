@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/avp"
 	"github.com/fiorix/go-diameter/v4/diam/datatype"
+	"github.com/fiorix/go-diameter/v4/diam/dict"
 	"github.com/fiorix/go-diameter/v4/diam/sm"
 )
 
@@ -164,6 +166,9 @@ func (s *DiameterServer) Start(ctx context.Context) error {
 	// fall back to a time-based grace; with it, peers that ack quickly are
 	// closed cleanly without paying the timeout.
 	s.stateMachine.HandleFunc("DPA", s.handleDPA)
+	// Every request no other handler takes is answered 3001 or 3007
+	// (RFC 6733 §7.1.3); go-diameter would leave it unanswered.
+	s.stateMachine.HandleFunc("ALL", s.handleUnsupported)
 
 	// S6a Request Handlers — wrapped in admitGate so per-peer rate limit
 	// sheds load with 3004 (TOO_BUSY) before the handler does
@@ -367,11 +372,68 @@ func (s *DiameterServer) authorizeCER(c diam.Conn, m *diam.Message) (string, boo
 		return "", false
 	}
 
+	if rc, failed := checkCER(m); rc != 0 {
+		logger.Warn("Rejecting CER (malformed)",
+			logger.String("origin_host", string(originHost)),
+			logger.String("result_code", strconv.FormatUint(uint64(rc), 10)))
+		monitor.IncrementCounter("diameter_cer_rejected_total", map[string]string{
+			"result_code": strconv.FormatUint(uint64(rc), 10),
+		})
+		a := CompleteAnswer(m.Answer(rc), m, s.cfg.Server.OriginHost, s.cfg.Server.OriginRealm)
+		// A CEA carries Host-IP-Address, Vendor-Id and Product-Name even when
+		// it reports an error (RFC 6733 §5.3.2), as the state machine's
+		// own CEAs do.
+		if c.LocalAddr() != nil {
+			for _, h := range sourceHosts(c.LocalAddr().String()) {
+				if ip := net.ParseIP(h); ip != nil {
+					a.NewAVP(avp.HostIPAddress, avp.Mbit, 0, datatype.Address(ip))
+				}
+			}
+		}
+		a.NewAVP(avp.VendorID, avp.Mbit, 0, datatype.Unsigned32(0))
+		a.NewAVP(avp.ProductName, 0, 0, datatype.UTF8String(s.cfg.Server.ProductName))
+		a.NewAVP(avp.FailedAVP, avp.Mbit, 0, &diam.GroupedAVP{AVP: failed})
+		if _, err := a.WriteTo(c); err != nil {
+			logger.Warn("CEA write failed", logger.String("err", err.Error()))
+		}
+		c.Close()
+		return "", false
+	}
+
 	logger.Info("Peer authorized via CER",
 		logger.String("origin_host", string(originHost)),
 		logger.String("source_addr", sourceAddr),
 		logger.String("matched_peer", peerCfg.Name))
 	return string(originHost), true
+}
+
+// handleUnsupported answers a request no other handler takes, with the E
+// flag (CompleteAnswer sets it): 3007 (DIAMETER_APPLICATION_UNSUPPORTED)
+// when the gateway knows no application with the request's Application-Id,
+// otherwise 3001 (DIAMETER_COMMAND_UNSUPPORTED) (RFC 6733 §7.1.3). An
+// unexpected answer is dropped: there is no request waiting for it.
+func (s *DiameterServer) handleUnsupported(c diam.Conn, m *diam.Message) {
+	if m.Header.CommandFlags&diam.RequestFlag == 0 {
+		return
+	}
+	d := m.Dictionary()
+	if d == nil {
+		d = dict.Default
+	}
+	rc := uint32(diam.CommandUnsupported)
+	if _, err := d.App(m.Header.ApplicationID); err != nil {
+		rc = diam.ApplicationUnsupported
+	}
+	command := strconv.FormatUint(uint64(m.Header.CommandCode), 10)
+	logger.Warn("Unsupported request answered",
+		logger.String("command_code", command),
+		logger.String("application_id", strconv.FormatUint(uint64(m.Header.ApplicationID), 10)),
+		logger.String("result_code", strconv.FormatUint(uint64(rc), 10)))
+	monitor.IncrementCounter("diameter_command_unsupported_total", map[string]string{"command_code": command})
+	a := CompleteAnswer(m.Answer(rc), m, s.cfg.Server.OriginHost, s.cfg.Server.OriginRealm)
+	if _, err := a.WriteTo(c); err != nil {
+		logger.Warn("answer write failed", logger.String("err", err.Error()))
+	}
 }
 
 // handleDPR processes peer-initiated Disconnect-Peer-Request (RFC 6733 §5.4.3).

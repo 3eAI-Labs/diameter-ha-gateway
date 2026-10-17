@@ -55,6 +55,9 @@ type pendingReq struct {
 	// arriving on it is delivered: the Session-Id alone is predictable, so
 	// any connected peer could otherwise answer for the MME.
 	conn diam.Conn
+	// hopByHop identifies the request on conn, for an answer that carries
+	// no Session-Id.
+	hopByHop uint32
 }
 
 func NewReverseService(nc *internalNats.Client, pm *diameter.PeerManager, cfg *config.Config) *ReverseService {
@@ -307,18 +310,14 @@ func (rs *ReverseService) executeReverseHop(
 	destRealm := rs.destRealmFor(event.Header.DestRealm)
 	diamMsg, sessionID := build(event, destHost, destRealm)
 
-	// Retransmission marker (RFC §3 + §6.1.1). Every hop beyond
-	// the first is a duplicate of the originally-sent request from the
-	// peer's perspective, so the T-bit MUST be set so peers can run their
-	// own duplicate detection. Redirect-honor retry is the only
-	// caller path that lifts depth above 0.
-	if state.depth > 0 {
-		rs.translator.SetTBit(diamMsg)
-	}
+	// A redirect hop is a new request, not a retransmission: the T flag
+	// MUST NOT be set once an error answer (here 3006) has been received
+	// for the earlier message (RFC 6733 §3).
 
 	respCh := make(chan *diam.Message, 1)
 	rs.mu.Lock()
-	rs.pendingReqs[sessionID] = &pendingReq{ch: respCh, peerHost: destHost, conn: conn}
+	rs.pendingReqs[sessionID] = &pendingReq{ch: respCh, peerHost: destHost, conn: conn,
+		hopByHop: diamMsg.Header.HopByHopID}
 	rs.mu.Unlock()
 
 	maskedIMSI := rs.translator.MaskIMSI(event.IMSI)
@@ -561,16 +560,8 @@ func (rs *ReverseService) HandleRSA(c diam.Conn, m *diam.Message) { rs.deliverAn
 func (rs *ReverseService) HandleDSA(c diam.Conn, m *diam.Message) { rs.deliverAnswer(c, m) }
 
 func (rs *ReverseService) deliverAnswer(c diam.Conn, m *diam.Message) {
-	sidAVP, err := m.FindAVP(avp.SessionID, 0)
-	if err != nil {
-		return
-	}
-	sessionID := diameter.AVPString(sidAVP)
-
-	rs.mu.RLock()
-	pr, exists := rs.pendingReqs[sessionID]
-	rs.mu.RUnlock()
-	if !exists {
+	sessionID, pr := rs.pendingFor(c, m)
+	if pr == nil {
 		return
 	}
 	if pr.conn != c {
@@ -586,6 +577,25 @@ func (rs *ReverseService) deliverAnswer(c diam.Conn, m *diam.Message) {
 	default:
 	}
 	rs.removeRequest(sessionID)
+}
+
+// pendingFor finds the request m answers: by its Session-Id or, for an
+// answer without one, by its hop-by-hop identifier on c. A protocol error
+// answer need not carry a Session-Id (RFC 6733 §7.2), and an answer always
+// carries its request's hop-by-hop identifier (§6.2).
+func (rs *ReverseService) pendingFor(c diam.Conn, m *diam.Message) (string, *pendingReq) {
+	rs.mu.RLock()
+	defer rs.mu.RUnlock()
+	if sidAVP, err := m.FindAVP(avp.SessionID, 0); err == nil {
+		sid := diameter.AVPString(sidAVP)
+		return sid, rs.pendingReqs[sid]
+	}
+	for sid, pr := range rs.pendingReqs {
+		if pr.conn == c && pr.hopByHop == m.Header.HopByHopID {
+			return sid, pr
+		}
+	}
+	return "", nil
 }
 
 func (rs *ReverseService) removeRequest(sid string) {

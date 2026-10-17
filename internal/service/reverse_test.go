@@ -233,3 +233,28 @@ func TestBuildFailoverAnswer_HasResultCode4012(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, datatype.Unsigned32(4012), rc.Data.(datatype.Unsigned32))
 }
+
+// TestDeliverAnswer_WithoutSessionIDMatchesHopByHop: a protocol error answer
+// need not carry a Session-Id (RFC 6733 §7.2). It reaches the request sent on
+// the same connection with its hop-by-hop identifier; up to 0.10.3 it was
+// dropped and the application waited for reverse_timeout.
+func TestDeliverAnswer_WithoutSessionIDMatchesHopByHop(t *testing.T) {
+	rs := &ReverseService{pendingReqs: make(map[string]*pendingReq)}
+	conn, other := &mockDiamConn{}, &mockDiamConn{}
+	ch := make(chan *diam.Message, 1)
+	rs.pendingReqs["gw;1;2;cl"] = &pendingReq{ch: ch, peerHost: "mme.example.org", conn: conn, hopByHop: 77}
+
+	answer := func(h2h uint32) *diam.Message {
+		m := diam.NewMessage(317, diam.ErrorFlag, 16777251, h2h, 1, dict.Default)
+		m.NewAVP(avp.ResultCode, avp.Mbit, 0, datatype.Unsigned32(3002))
+		return m
+	}
+
+	rs.HandleCLA(conn, answer(78))
+	rs.HandleCLA(other, answer(77))
+	require.Empty(t, ch, "another request's or another connection's answer is not delivered")
+
+	rs.HandleCLA(conn, answer(77))
+	require.Len(t, ch, 1)
+	assert.Empty(t, rs.pendingReqs)
+}

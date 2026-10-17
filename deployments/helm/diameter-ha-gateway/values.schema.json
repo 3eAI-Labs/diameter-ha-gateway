@@ -636,6 +636,7 @@
             },
             "request_timeout": { "$ref": "#/$defs/goDuration" },
             "gx_context_ids": { "type": "array", "items": { "type": "string" },
+              "description": "Ignored: Gx CCRs are recognised by their Application-Id (16777238). Kept so existing values validate.",
               "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" } },
             "gy_context_ids": { "type": "array", "items": { "type": "string" },
               "x-arinna": { "userExposed": true, "mutableAtRuntime": true, "riskClass": "low" } },
