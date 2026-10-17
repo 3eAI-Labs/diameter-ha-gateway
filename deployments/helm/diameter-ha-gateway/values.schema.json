@@ -298,6 +298,46 @@
         }
       }
     },
+    "nats": {
+      "type": "object",
+      "description": "Bundled single-replica core NATS, deployed only when config.nats.url is empty. For a trial or smoke install, not for production.",
+      "additionalProperties": false,
+      "properties": {
+        "deploy": {
+          "type": "boolean",
+          "default": true,
+          "description": "Deploy the bundled NATS when config.nats.url is empty. False: config.nats.url is required.",
+          "x-arinna": {
+            "userExposed": false,
+            "mutableAtRuntime": false,
+            "riskClass": "medium"
+          }
+        },
+        "image": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "requests": {
+              "type": "object",
+              "properties": {
+                "cpu": { "$ref": "#/$defs/quantity" },
+                "memory": { "$ref": "#/$defs/quantity" }
+              }
+            },
+            "limits": {
+              "type": "object",
+              "properties": {
+                "cpu": { "$ref": "#/$defs/quantity" },
+                "memory": { "$ref": "#/$defs/quantity" }
+              }
+            }
+          }
+        }
+      }
+    },
     "config": {
       "type": "object",
       "description": "Rendered verbatim into /root/configs/config.yaml.",
@@ -511,8 +551,7 @@
           "properties": {
             "url": {
               "type": "string",
-              "description": "NATS server URL (backend event bus).",
-              "minLength": 1,
+              "description": "URL of the NATS the applications use. Empty: the chart deploys its own NATS (nats.deploy) for a trial install; required when nats.deploy is false.",
               "x-arinna": {
                 "userExposed": true,
                 "mutableAtRuntime": false,

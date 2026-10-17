@@ -91,6 +91,18 @@ diam:RegistryAllowlistShape a sh:NodeShape ;
         sh:message "imageRepository must be on an allowlisted registry — no http(s):// scheme, RFC-1918 private IP, or localhost (ARIN-ONB-0014)."
     ] .
 
+# production ⇒ the applications' NATS is configured  (an empty natsUrl makes the chart
+# deploy its own trial NATS, which no application is connected to: pods become Ready and
+# every request goes unanswered).
+diam:ProdNatsUrlShape a sh:NodeShape ;
+    sh:targetClass diam:Deployment ;
+    sh:message "When appEnv is production-like, natsUrl must be set to the applications' NATS (empty = the chart's bundled trial NATS)." ;
+    sh:severity sh:Violation ;
+    sh:or (
+        [ sh:not [ sh:property [ sh:path diam:appEnv ; sh:in ( "prod" "stage" "staging" "production" ) ] ] ]
+        [ sh:property [ sh:path diam:natsUrl ; sh:minCount 1 ; sh:minLength 1 ] ]
+    ) .
+
 # production ⇒ at least 2 replicas  (HA floor — a single-replica prod deploy
 # defeats the gateway's HA purpose. Advisory: operators may knowingly run 1.)
 diam:ProdReplicaFloorShape a sh:NodeShape ;

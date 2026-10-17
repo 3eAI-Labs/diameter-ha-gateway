@@ -8,6 +8,7 @@ Endpoints (Service {{ include "diameter-ha-gateway.fullname" . }}):
   - Diameter : {{ .Values.service.diameterPort }}/{{ .Values.service.diameterProtocol }}  (origin-host {{ .Values.config.server.origin_host }})
   - Admin    : {{ if .Values.service.exposeAdmin }}{{ .Values.service.adminPort }}/TCP exposed{{ else }}NOT exposed on Service (port-forward){{ end }}  (auth: {{ .Values.config.admin.auth.enabled }})
   - Metrics  : {{ .Values.service.metricsPort }}/TCP  {{ .Values.probes.path }}
+NATS:      {{ include "diameter-ha-gateway.natsURL" . }}{{ if include "diameter-ha-gateway.natsBundled" . }}  (bundled){{ end }}
 
 Day-2:
   - Config change  → re-apply values; the config checksum rolls pods automatically.
@@ -31,4 +32,11 @@ WARNING: config.server.tls.enabled=true but tls.existingSecret is empty — no c
 WARNING: service.exposeAdmin=true but config.admin.auth.enabled=false — the admin
          API is reachable on the Service WITHOUT authentication. Enable admin auth
          (config.admin.auth.enabled=true) or set service.exposeAdmin=false.
+{{- end }}
+{{- if include "diameter-ha-gateway.natsBundled" . }}
+
+WARNING: config.nats.url is empty, so the gateway uses the NATS this chart deployed
+         ({{ include "diameter-ha-gateway.fullname" . }}-nats). No application is connected to it,
+         so requests from peers will get no answer. For a real installation set
+         config.nats.url to the NATS your applications use.
 {{- end }}

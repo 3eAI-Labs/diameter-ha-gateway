@@ -139,6 +139,22 @@ tls:
 opsTrigger:
   restart: ""
 
+# Bundled NATS, used only when config.nats.url is empty: a single-replica, core-only NATS
+# (no JetStream, no storage) so that an install with the chart's defaults starts and becomes
+# Ready, as Arinna's onboarding render and smoke install do. NOT for production: there the
+# gateway must reach the applications' NATS, so set config.nats.url to it. With a URL set,
+# nothing below is deployed. With nats.deploy=false and no URL the chart refuses to render.
+nats:
+  deploy: true
+  image: docker.io/library/nats:2.10-alpine
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
 # ---------------------------------------------------------------------------
 # config: rendered verbatim into config.yaml (see internal/config/config.go).
 # ---------------------------------------------------------------------------
@@ -183,7 +199,9 @@ config:
       audience: ""
 
   nats:
-    url: "nats://nats.infra.svc.cluster.local:4222"
+    # The NATS the applications use (S6a, Gx, SGd, ... handlers). Empty: the chart deploys its
+    # own NATS (see nats: above) and points the gateway at it.
+    url: ""
     connect_timeout: "5s"
     request_timeout: "2s"
     tls:

@@ -5,9 +5,11 @@ metadata:
   labels:
     {{- include "diameter-ha-gateway.labels" . | nindent 4 }}
 data:
-  # Rendered verbatim from .Values.config; loaded by viper as ./configs/config.yaml.
+  # Rendered from .Values.config (nats.url resolved, TLS paths set); loaded by viper as
+  # ./configs/config.yaml.
   config.yaml: |
     {{- $config := deepCopy .Values.config }}
+    {{- $_ := set $config.nats "url" (include "diameter-ha-gateway.natsURL" .) }}
     {{- if and .Values.config.server.tls.enabled .Values.tls.existingSecret }}
     {{- $_ := set $config.server.tls "cert_file" (printf "%s/%s" .Values.tls.mountPath .Values.tls.certKey) }}
     {{- $_ := set $config.server.tls "key_file" (printf "%s/%s" .Values.tls.mountPath .Values.tls.keyKey) }}

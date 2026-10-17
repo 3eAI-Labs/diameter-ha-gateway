@@ -49,3 +49,35 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end -}}
+
+{{/* Labels of the bundled NATS. Its own app.kubernetes.io/name, so the gateway's Service,
+Deployment, PDB and NetworkPolicy selectors never match NATS pods. */}}
+{{- define "diameter-ha-gateway.natsSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "diameter-ha-gateway.name" . }}-nats
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "diameter-ha-gateway.natsLabels" -}}
+helm.sh/chart: {{ include "diameter-ha-gateway.chart" . }}
+{{ include "diameter-ha-gateway.natsSelectorLabels" . }}
+app.kubernetes.io/component: nats
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+app.kubernetes.io/part-of: telco
+{{- end -}}
+
+{{/* True when the chart deploys its own NATS: no URL given and nats.deploy on. */}}
+{{- define "diameter-ha-gateway.natsBundled" -}}
+{{- if and (not .Values.config.nats.url) .Values.nats.deploy -}}true{{- end -}}
+{{- end -}}
+
+{{/* The NATS URL the gateway is configured with: config.nats.url when set, else the
+bundled NATS, else a render error. */}}
+{{- define "diameter-ha-gateway.natsURL" -}}
+{{- if .Values.config.nats.url -}}
+{{- .Values.config.nats.url -}}
+{{- else if .Values.nats.deploy -}}
+{{- printf "nats://%s-nats:4222" (include "diameter-ha-gateway.fullname" .) -}}
+{{- else -}}
+{{- fail "config.nats.url is required when nats.deploy=false: set it to the NATS your applications use." -}}
+{{- end -}}
+{{- end -}}

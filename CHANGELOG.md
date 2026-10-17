@@ -9,6 +9,25 @@ describes what changed for an installation of 0.9.4.
 
 ## [Unreleased]
 
+## [0.10.2] — 2026-10-17
+
+Chart 0.2.2. The gateway itself is unchanged from 0.10.1: the same binary, configuration and NATS
+contract. Values written for chart 0.2.1 that set `config.nats.url` keep working unchanged.
+
+### Fixed
+
+- The chart no longer ships a NATS address. Its default `config.nats.url` named a namespace that
+  does not exist (`nats.infra.svc.cluster.local`), so an install with the defaults never connected
+  and its pods restarted in a loop. `config.nats.url` is now empty by default:
+  - set to the NATS your applications use — the normal case — the gateway connects to it;
+  - left empty, the chart deploys its own single-replica NATS (`nats.deploy`, core NATS, no
+    storage) so a trial install starts and becomes Ready. No application is connected to that NATS,
+    and the install notes say so. It has no authentication; a NetworkPolicy admits only the
+    release's gateway pods to it;
+  - left empty with `nats.deploy=false`, the chart refuses to render.
+
+  The SHACL shapes reject an empty `natsUrl` when `appEnv` is production-like.
+
 ## [0.10.1] — 2026-10-17
 
 No change to the gateway's behaviour, configuration or NATS contract.
@@ -97,6 +116,7 @@ No change to the gateway's behaviour, configuration or NATS contract.
 See the [README](README.md#known-limitations). New in this release: gateway-initiated requests
 reach directly connected peers only, a consequence of binding identities to connections.
 
-[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.2...HEAD
+[0.10.2]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/releases/tag/v0.10.0

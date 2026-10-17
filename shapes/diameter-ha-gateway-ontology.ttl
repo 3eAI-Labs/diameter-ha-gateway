@@ -69,7 +69,8 @@ diam:network a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:strin
     rdfs:comment "Diameter transport: tcp|tcp4|tcp6|sctp|sctp4|sctp6." .
 diam:originHost a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:string .
 diam:originRealm a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:string .
-diam:natsUrl a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:string .
+diam:natsUrl a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:string ;
+    rdfs:comment "config.nats.url. Empty: the chart deploys its own trial NATS (nats.deploy); MUST be set in production." .
 diam:imageRepository a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:string ;
     rdfs:comment "Container image repository; must be on an allowlisted registry (Contract §8.1)." .
 diam:replicaCount a rdf:Property ; rdfs:domain diam:Deployment ; rdfs:range xsd:integer .
