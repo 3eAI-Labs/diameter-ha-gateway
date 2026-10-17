@@ -1,7 +1,7 @@
 # Multi-stage build for Diameter HA Gateway
 
 # Stage 1: Build Frontend
-FROM node:18-alpine AS frontend-builder
+FROM node:24-alpine AS frontend-builder
 WORKDIR /app/web
 COPY web/package.json ./
 RUN npm install
@@ -35,7 +35,7 @@ RUN go install github.com/google/go-licenses/v2@v2.0.1 && \
         --ignore github.com/3eAI-Labs/diameter-ha-gateway/
 
 # Final stage
-FROM alpine:3.18
+FROM alpine:3.24
 
 LABEL org.opencontainers.image.title="diameter-ha-gateway" \
       org.opencontainers.image.vendor="3eAI Labs Ltd" \

@@ -60,7 +60,7 @@ yet a published contract.
 
 ## Running it
 
-Requirements: Go 1.25; Node.js for the admin UI (the image builds it with Node 18); a NATS server
+Requirements: Go 1.25; Node.js for the admin UI (the image builds it with Node 24); a NATS server
 (core NATS; JetStream is not used).
 
 ```bash

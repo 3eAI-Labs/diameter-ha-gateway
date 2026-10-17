@@ -44,3 +44,16 @@ jobs:
         # (AGPL-compatible, and keeps a commercial licence possible); client module, when
         # present, permissive-only and free of gateway imports.
         run: scripts/check-licenses.sh
+
+  image:
+    name: Container image
+    # The image is otherwise built only by the release workflow, on a tag: a broken Dockerfile
+    # or base image would surface there. Same commands as `make image-smoke`, so a failure here
+    # reproduces locally.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: make image
+      - name: Smoke test
+        run: scripts/image-smoke.sh diameter-ha-gateway:dev

@@ -9,12 +9,12 @@ type: application
 
 # Chart version — bump independently of the application (SemVer). Breaking
 # values.schema.json changes require a MAJOR bump (Contract §2, §4.7).
-version: 0.2.0
+version: 0.2.1
 
 # Application version — the diameter-gateway binary this chart deploys. Releases
 # go to ghcr.io/3eai-labs/diameter-ha-gateway:<appVersion>; 0.9.4 was published
 # to registry.3eai-labs.com only.
-appVersion: "0.10.0"
+appVersion: "0.10.1"
 
 keywords:
   - diameter

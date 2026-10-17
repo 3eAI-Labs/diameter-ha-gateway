@@ -10,7 +10,7 @@ export GOWORK := off
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build vet test licenses image
+.PHONY: help build vet test licenses image image-smoke
 
 help: ## List available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -30,6 +30,9 @@ licenses: ## Check licence headers and dependency licences
 
 image: ## Build the container image (admin UI, gateway, licence texts) as diameter-ha-gateway:dev
 	docker build -f deployments/Dockerfile -t diameter-ha-gateway:dev .
+
+image-smoke: image ## Build the image, then start it next to a NATS server and check that it comes up healthy
+	scripts/image-smoke.sh diameter-ha-gateway:dev
 
 # Targets that need files outside the public tree (see internal.mk).
 -include internal.mk

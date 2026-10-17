@@ -4,10 +4,24 @@ All notable changes to diameter-ha-gateway are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [SemVer](https://semver.org/) (pre-1.0: a minor version may be breaking).
 
-Versions up to 0.9.4 were released privately; 0.10.0 is the first public release. The entries below
-describe what changed for an installation of 0.9.4.
+Versions up to 0.9.4 were released privately; 0.10.0 is the first public release. Its entry
+describes what changed for an installation of 0.9.4.
 
 ## [Unreleased]
+
+## [0.10.1] — 2026-10-17
+
+No change to the gateway's behaviour, configuration or NATS contract.
+
+### Licensing and packaging
+
+- The image runs on Alpine 3.24 (was 3.18, out of support since May 2025) and builds the admin UI
+  with Node.js 24 LTS (was 18, out of support since April 2025). The image's contents are otherwise
+  unchanged: the same binary, configuration, admin UI files and licence texts.
+- Chart 0.2.1 deploys 0.10.1; its values and schema are those of 0.2.0.
+- CI builds the image on every pull request and starts it next to a NATS server
+  (`scripts/image-smoke.sh`: health, admin UI, non-root user, licence texts). `make image-smoke` runs
+  the same check locally.
 
 ## [0.10.0] — 2026-10-17
 
@@ -83,5 +97,6 @@ describe what changed for an installation of 0.9.4.
 See the [README](README.md#known-limitations). New in this release: gateway-initiated requests
 reach directly connected peers only, a consequence of binding identities to connections.
 
-[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/releases/tag/v0.10.0
