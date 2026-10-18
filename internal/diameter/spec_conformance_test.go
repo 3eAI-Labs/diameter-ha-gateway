@@ -108,8 +108,14 @@ func TestMessages_EncodeTS29272(t *testing.T) {
 	}
 	idr, _ := tr.CreateIDR("001010123456789", "mme.example", "example", "hss.example", "example", profile, "", 1)
 	dsr, _ := tr.CreateDSR("001010123456789", "mme.example", "example", "hss.example", "example", 1, []uint32{1})
-	clr, _ := tr.CreateCLR("001010123456789", "mme.example", "example", "hss.example", "example")
+	clr, _ := tr.CreateCLR("001010123456789", "mme.example", "example", "hss.example", "example", 0)
 	rsr, _ := tr.CreateRSR("001010123456789", "mme.example", "example", "hss.example", "example")
+	// The fields an application may add to its requests, all filled.
+	event := &pb.S6aEvent{}
+	fill(reflect.ValueOf(event).Elem(), "", 0)
+	for cmd, m := range map[string]*diam.Message{"IDR": idr, "DSR": dsr, "CLR": clr, "RSR": rsr} {
+		require.NoError(t, ApplyRequestExtras(m, cmd, event), cmd)
+	}
 
 	for name, m := range map[string]*diam.Message{
 		"ULA": answer(316, 16777251, &pb.S6aAnswer{}),
@@ -338,7 +344,18 @@ func checkEncoded(t *testing.T, path string, a *diam.AVP) {
 		t.Errorf("%s: AVP %d is in neither TS 29.272 Table 7.3.1/1 nor reused29272", path, a.Code)
 		return
 	}
-	assert.Equal(t, r.MustM, a.Flags&avp.Mbit != 0, "%s/%s (%d): M-bit (%s)", path, r.Name, a.Code, r.Spec)
+	mustM := r.MustM
+	if a.Code == avp.SupportedFeatures && isAnswerPath(path) {
+		// TS 29.229 §7.2.1: within an answer the AVP "shall never have the
+		// 'M' bit set" (in a request it always has).
+		mustM = false
+	}
+	assert.Equal(t, mustM, a.Flags&avp.Mbit != 0, "%s/%s (%d): M-bit (%s)", path, r.Name, a.Code, r.Spec)
+}
+
+// isAnswerPath reports whether path, "ULA/…" or "IDR/…", walks an answer.
+func isAnswerPath(path string) bool {
+	return strings.HasSuffix(strings.SplitN(path, "/", 2)[0], "A")
 }
 
 func codeName(code uint32) string {

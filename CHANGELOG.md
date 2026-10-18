@@ -9,6 +9,48 @@ describes what changed for an installation of 0.9.4.
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-10-18
+
+Chart 0.3.2 (values and schema unchanged). S6a release, with client module 0.2.0: the rest of
+each S6a message reaches the application and can be sent by it, and four behaviours that broke
+TS 29.272 or TS 29.229 are fixed. Applications that set `mip6_home_link_prefix`: it is now hex.
+
+### Fixed
+
+- **S6a:**
+  - Supported-Features in ULA, AIA, PUA and NOA no longer carries the M bit ("within an answer
+    application message the AVP shall never have the 'M' bit set", TS 29.229 §7.2.1), nor do
+    Feature-List-ID and Feature-List anywhere (Table 6.3.1).
+  - ULA-Flags and PUA-Flags are sent only with DIAMETER_SUCCESS (TS 29.272 Tables 5.2.1.1.1/2,
+    5.2.1.3.1/2); a failed answer carried them too.
+  - A CLR carries the application's `cancellation_type`; it was always 0 (MME_UPDATE_PROCEDURE).
+  - An IDR without subscription data, which only requests user state, location, reachability or
+    time zone, carries the mandatory Subscription-Data empty (§5.2.2.1.3); it was left out.
+  - A NOR's `service_selection` took the Service-Selection of a ULR's first Active-APN; it is read
+    at top level only.
+
+### Added
+
+- **S6a: the rest of each message reaches the application** (client module 0.2.0):
+  - from the MME's ULR, AIR, PUR and NOR: Active-APN whole (with its Context-Identifier),
+    SMS-Register-Request, SGs-MME-Identity, Coupled-Node-Diameter-ID, Adjacent-PLMNs, the
+    Terminal-Information's 3GPP2-MEID, AIR-Flags, the PUR's EPS-Location-Information, the NOR's
+    Maximum-UE-Availability-Time and Visited-Network-Identifier;
+  - from the MME's CLA, IDA, DSA and RSA, which reached the application as their result code
+    only: Supported-Features, Failed-AVP, DSA-Flags and the IDA's IDA-Flags,
+    IMS-Voice-Over-PS-Sessions-Supported, Last-UE-Activity-Time, RAT-Type, EPS-User-State,
+    EPS-Location-Information and Local-Time-Zone.
+- **S6a: what an application can send.** CLR-Flags (CLR), Reset-ID (IDR, RSR), further User-Ids
+  (RSR), Trace-Reference, TS-Code and SS-Code (DSR), and in all four requests Supported-Features
+  and DRMP; in an AIA, UTRAN and GERAN vectors beside E-UTRAN ones, and UE-Usage-Type; in a ULA or
+  AIA, Error-Diagnostic. An invalid hex value is answered 5004 and not sent.
+
+### Changed
+
+- **`mip6_home_link_prefix` is hex** (client module 0.2.0), the prefix length octet and the
+  16-octet prefix (RFC 5447 §4.2.4), in subscription data and in Active-APN. The gateway wrote the
+  string's bytes, which JSON cannot carry for a binary prefix.
+
 ## [0.12.0] — 2026-10-18
 
 Chart 0.3.1 (values and schema unchanged). S6c and SGd release: both applications are rewritten
@@ -281,7 +323,8 @@ No change to the gateway's behaviour, configuration or NATS contract.
 See the [README](README.md#known-limitations). New in this release: gateway-initiated requests
 reach directly connected peers only, a consequence of binding identities to connections.
 
-[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.3...v0.11.0
 [0.10.3]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.2...v0.10.3

@@ -15,7 +15,11 @@ import (
 // debugging ("UTF8String{286011234567890},Padding:1"). Forwarding that string
 // put it in every event's IMSI and header, kept MME answers from matching
 // their pending requests, and made every CCR miss its Service-Context-Id.
+// A nil AVP reads as "".
 func AVPString(a *diam.AVP) string {
+	if a == nil {
+		return ""
+	}
 	switch v := a.Data.(type) {
 	case datatype.UTF8String:
 		return string(v)

@@ -134,7 +134,9 @@ func (t *Translator) ToS6aEvent(m *diam.Message, traceID string) (*pb.S6aEvent, 
 	if a := t.findAVP(m, avp.ContextIdentifier, 10415); a != nil {
 		event.ContextID = uint32(a.Data.(datatype.Unsigned32))
 	}
-	if a, err := m.FindAVP(avp.ServiceSelection, 0); err == nil {
+	// The NOR's own Service-Selection, at top level: FindAVP searches
+	// groups too and returned the Active-APN's of a ULR.
+	if a := t.findAVP(m, avp.ServiceSelection, 0); a != nil {
 		event.ServiceSelect = AVPString(a)
 	}
 	if a := t.findAVP(m, 1434, 10415); a != nil { // Alert-Reason, Enumerated (§7.3.83)
@@ -209,6 +211,7 @@ func (t *Translator) ToS6aEvent(m *diam.Message, traceID string) (*pb.S6aEvent, 
 			event.DRMP = uint32(e)
 		}
 	}
+	decodeNetworkRequestExtras(m, event)
 
 	// Supported-Features (628) — TS 29.229 §6.2 / TS 29.272 §7.3.10. Repeated
 	// Grouped AVP advertising MME-supported feature bits (Multiple-PDN-
@@ -274,6 +277,8 @@ func (t *Translator) parseTerminalInfo(a *diam.AVP) *pb.TerminalInfo {
 				info.IMEI = AVPString(sub)
 			case avp.SoftwareVersion:
 				info.SV = AVPString(sub)
+			case avp3GPP2MEID:
+				info.MEID = hexOf(sub)
 			}
 		}
 	}
@@ -342,7 +347,7 @@ func uniqueSessionID(originHost, kind string) string {
 // CreateCLR builds a Cancel-Location-Request (TS 29.272 §6.1.1).
 // Returns the message and the generated Session-Id so the caller can register
 // in pendingReqs without re-extracting the AVP.
-func (t *Translator) CreateCLR(imsi, destHost, destRealm, originHost, originRealm string) (*diam.Message, string) {
+func (t *Translator) CreateCLR(imsi, destHost, destRealm, originHost, originRealm string, cancellationType uint32) (*diam.Message, string) {
 	sid := uniqueSessionID(originHost, "cl")
 	m := newProxiableRequest(317, 16777251)
 	m.NewAVP(avp.SessionID, avp.Mbit, 0, datatype.UTF8String(sid))
@@ -351,8 +356,8 @@ func (t *Translator) CreateCLR(imsi, destHost, destRealm, originHost, originReal
 	m.NewAVP(avp.DestinationHost, avp.Mbit, 0, datatype.DiameterIdentity(destHost))
 	m.NewAVP(avp.DestinationRealm, avp.Mbit, 0, datatype.DiameterIdentity(destRealm))
 	m.NewAVP(avp.UserName, avp.Mbit, 0, datatype.UTF8String(imsi))
-	m.NewAVP(avp.AuthSessionState, avp.Mbit, 0, datatype.Enumerated(1)) // NO_STATE_MAINTAINED
-	m.AddAVP(avp3GPP(avp.CancellationType, datatype.Enumerated(0)))
+	m.NewAVP(avp.AuthSessionState, avp.Mbit, 0, datatype.Enumerated(1))            // NO_STATE_MAINTAINED
+	m.AddAVP(avp3GPP(avp.CancellationType, datatype.Enumerated(cancellationType))) // §7.3.24; 0 MME_UPDATE_PROCEDURE
 	return m, sid
 }
 
@@ -466,6 +471,12 @@ func (t *Translator) CreateIDR(imsi, destHost, destRealm, originHost, originReal
 	m.NewAVP(avp.UserName, avp.Mbit, 0, datatype.UTF8String(imsi))
 	m.NewAVP(avp.AuthSessionState, avp.Mbit, 0, datatype.Enumerated(1))
 	emitSubscriptionData(m, subProfile, subscriberData, "IDR")
+	// { Subscription-Data } is mandatory; an IDR that only requests user
+	// state, location, reachability or time zone carries it empty (TS 29.272
+	// §5.2.2.1.3).
+	if _, err := m.FindAVP(avp.SubscriptionData, vendorID3GPP); err != nil {
+		m.AddAVP(avp3GPP(avp.SubscriptionData, &diam.GroupedAVP{}))
+	}
 	if idrFlags != 0 {
 		// IDR-Flags AVP code 1490 (vendor 10415) — not exported as a constant
 		// in go-diameter v4 so we reference the numeric code directly.
@@ -486,9 +497,12 @@ func (t *Translator) ToDiameterAnswer(respData []byte, req *diam.Message) (*diam
 		}
 		ans = applyResultCode(req, res.ResultCode, res.ExperimentalResultCode)
 		emitSubscriptionData(ans, res.SubProfile, res.SubData, "ULA")
-		if res.ULAFlags != 0 {
+		// ULA-Flags "shall be present only when the Result-Code AVP is
+		// DIAMETER_SUCCESS" (TS 29.272 Table 5.2.1.1.1/2).
+		if res.ULAFlags != 0 && succeeded(res.ResultCode, res.ExperimentalResultCode) {
 			ans.AddAVP(avp3GPP(avp.ULAFlags, datatype.Unsigned32(res.ULAFlags)))
 		}
+		applyErrorDiagnostic(ans, &res)
 		applyRedirectAVPs(ans, &res)
 		applySupportedFeatures(ans, res.SupportedFeatures)
 		applyResetIDs(ans, res.ResetIDs)
@@ -506,9 +520,21 @@ func (t *Translator) ToDiameterAnswer(respData []byte, req *diam.Message) (*diam
 			// 5012 so the caller sees a deterministic failure code
 			// rather than an answer with corrupt crypto material.
 			return req.Answer(5012 /* DIAMETER_UNABLE_TO_COMPLY */), err
-		} else if vectors != nil {
-			ans.AddAVP(avp3GPP(avp.AuthenticationInfo, vectors))
+		} else {
+			if vectors == nil {
+				vectors = &diam.GroupedAVP{}
+			}
+			if err := encodeUTRANGERANVectors(vectors, res.UTRANVectors, res.GERANVectors); err != nil {
+				return req.Answer(5012 /* DIAMETER_UNABLE_TO_COMPLY */), err
+			}
+			if len(vectors.AVP) > 0 {
+				ans.AddAVP(avp3GPP(avp.AuthenticationInfo, vectors))
+			}
 		}
+		if res.UEUsageType != nil {
+			ans.AddAVP(avp3GPP(avpUEUsageType, datatype.Unsigned32(*res.UEUsageType)))
+		}
+		applyErrorDiagnostic(ans, &res)
 		applyRedirectAVPs(ans, &res)
 		applySupportedFeatures(ans, res.SupportedFeatures)
 		applyFailedAVPs(ans, res.FailedAVPs)
@@ -519,7 +545,8 @@ func (t *Translator) ToDiameterAnswer(respData []byte, req *diam.Message) (*diam
 			return req.Answer(diam.UnableToDeliver), err
 		}
 		ans = applyResultCode(req, res.ResultCode, res.ExperimentalResultCode)
-		if res.PUAFlags != 0 {
+		// PUA-Flags: only with DIAMETER_SUCCESS (Table 5.2.1.3.1/2).
+		if res.PUAFlags != 0 && succeeded(res.ResultCode, res.ExperimentalResultCode) {
 			ans.AddAVP(avp3GPP(avp.PUAFlags, datatype.Unsigned32(res.PUAFlags)))
 		}
 		applyRedirectAVPs(ans, &res)
@@ -623,6 +650,21 @@ func applyResetIDs(ans *diam.Message, ids []string) {
 	}
 }
 
+// applyErrorDiagnostic writes the ULA's or AIA's Error-Diagnostic (1614,
+// TS 29.272 §7.3.128), which qualifies an Experimental-Result.
+func applyErrorDiagnostic(ans *diam.Message, res *pb.S6aAnswer) {
+	if res.ErrorDiagnostic != nil {
+		ans.AddAVP(avp3GPP(avpErrorDiagnostic, datatype.Enumerated(*res.ErrorDiagnostic)))
+	}
+}
+
+// succeeded reports whether an answer carries Result-Code DIAMETER_SUCCESS.
+// An application reply without result code is answered 5012
+// (CompleteAnswer), so 0 is no success.
+func succeeded(resultCode, experimentalResultCode uint32) bool {
+	return experimentalResultCode == 0 && resultCode == diam.Success
+}
+
 // applySupportedFeatures emits one Supported-Features Grouped AVP (628) per
 // producer-supplied entry. Each Grouped AVP carries Vendor-Id (266, base) +
 // Feature-List-ID (629, vendor 10415) + Feature-List (630, vendor 10415) per
@@ -631,9 +673,14 @@ func applyResetIDs(ans *diam.Message, ids []string) {
 // Used on ULA/AIA/PUA/NOA answers (Rel-12+ feature negotiation). Producer
 // (the backend) handles the actual intersection of HSS-supported features and the
 // incoming MME's advertised features; gateway transports verbatim.
+//
+// None of the three carries the M bit here: Supported-Features "within an
+// answer application message ... shall never have the 'M' bit set" (TS
+// 29.229 §7.2.1), and Feature-List-ID and Feature-List must not set it (Table
+// 6.3.1).
 func applySupportedFeatures(ans *diam.Message, sfs []pb.SupportedFeature) {
 	for _, sf := range sfs {
-		ans.AddAVP(avp3GPP(avp.SupportedFeatures, &diam.GroupedAVP{
+		ans.AddAVP(diam.NewAVP(avp.SupportedFeatures, avp.Vbit, vendorID3GPP, &diam.GroupedAVP{
 			AVP: []*diam.AVP{
 				diam.NewAVP(avp.VendorID, avp.Mbit, 0, datatype.Unsigned32(sf.VendorID)),
 				avp3GPP(avp.FeatureListID, datatype.Unsigned32(sf.FeatureListID)),

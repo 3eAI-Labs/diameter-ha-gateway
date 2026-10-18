@@ -10,10 +10,11 @@ import (
 	"github.com/fiorix/go-diameter/v4/diam/dict"
 )
 
-// dict29272XML registers the TS 29.272 Subscription-Data AVPs the encoder
-// writes and go-diameter v4's S6a dictionary lacks. Code, type and M-bit of
-// every entry are those of Table 7.3.1/1 (spec29272);
-// TestDictionary_MatchesTS29272 keeps them so.
+// dict29272XML registers the TS 29.272 AVPs the gateway reads or writes and
+// go-diameter v4's S6a dictionary lacks. Code, type and M-bit of every entry
+// are those of Table 7.3.1/1 (spec29272), or for Maximum-UE-Availability-
+// Time those of TS 29.338 (reused29272); TestDictionary_MatchesTS29272
+// keeps them so.
 //
 // Not registered here because go-diameter already has them: Trace-Data
 // children (1452, 1462-1466), MDT-Configuration (1622), Ext-PDP-Type (1620),
@@ -190,6 +191,84 @@ const dict29272XML = `<?xml version="1.0" encoding="UTF-8"?>
         <!-- NOR (§7.2.17): read by ToS6aEvent; undefined, it decoded as Unknown -->
         <avp name="Alert-Reason" code="1434" must="M,V" may-encrypt="N" vendor-id="10415">
             <data type="Enumerated"/>
+        </avp>
+        <!-- AVPs of the requests from the MME and of the MME's answers that
+             go-diameter's S6a dictionary lacks (TS 29.272 Table 7.3.1/1) -->
+        <avp name="IDA-Flags" code="1441" must="M,V" must-not="" may-encrypt="N" vendor-id="10415">
+            <data type="Unsigned32"/>
+        </avp>
+        <avp name="IMS-Voice-Over-PS-Sessions-Supported" code="1492" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Enumerated"/>
+        </avp>
+        <avp name="Last-UE-Activity-Time" code="1494" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Time"/>
+        </avp>
+        <avp name="EPS-User-State" code="1495" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped"/>
+        </avp>
+        <avp name="EPS-Location-Information" code="1496" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped"/>
+        </avp>
+        <avp name="MME-User-State" code="1497" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped"/>
+        </avp>
+        <avp name="SGSN-User-State" code="1498" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped"/>
+        </avp>
+        <avp name="User-State" code="1499" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Enumerated"/>
+        </avp>
+        <avp name="MME-Location-Information" code="1600" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped"/>
+        </avp>
+        <avp name="SGSN-Location-Information" code="1601" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped"/>
+        </avp>
+        <avp name="Service-Area-Identity" code="1607" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="OctetString"/>
+        </avp>
+        <avp name="Geographical-Information" code="1608" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="OctetString"/>
+        </avp>
+        <avp name="Geodetic-Information" code="1609" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="OctetString"/>
+        </avp>
+        <avp name="Current-Location-Retrieved" code="1610" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Enumerated"/>
+        </avp>
+        <avp name="Age-Of-Location-Information" code="1611" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Unsigned32"/>
+        </avp>
+        <avp name="Time-Zone" code="1642" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="UTF8String"/>
+        </avp>
+        <avp name="Local-Time-Zone" code="1649" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped"/>
+        </avp>
+        <avp name="Daylight-Saving-Time" code="1650" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Enumerated"/>
+        </avp>
+        <avp name="3GPP2-MEID" code="1471" must="M,V" must-not="" may-encrypt="N" vendor-id="10415">
+            <data type="OctetString"/>
+        </avp>
+        <avp name="SMS-Register-Request" code="1648" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Enumerated"/>
+        </avp>
+        <avp name="SGs-MME-Identity" code="1664" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="UTF8String"/>
+        </avp>
+        <avp name="Coupled-Node-Diameter-ID" code="1666" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="DiameterIdentity"/>
+        </avp>
+        <avp name="Adjacent-PLMNs" code="1672" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped"/>
+        </avp>
+        <avp name="AIR-Flags" code="1679" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Unsigned32"/>
+        </avp>
+        <!-- TS 29.338 §5.3.3.22, re-used by the NOR -->
+        <avp name="Maximum-UE-Availability-Time" code="3329" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Time"/>
         </avp>
     </application>
 </diameter>`

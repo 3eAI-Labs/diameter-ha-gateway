@@ -58,7 +58,7 @@ func TestGateway_RequestOriginHostDoesNotRebindPeer(t *testing.T) {
 // arrives on the connection the request was sent on.
 func TestDeliverAnswer_OnlyFromTheRequestsConnection(t *testing.T) {
 	rs := &ReverseService{pendingReqs: map[string]*pendingReq{}, translator: diameter.NewTranslator()}
-	_, sid := rs.translator.CreateCLR("001010000000001", "mme.example", "example", "gw.example", "example")
+	_, sid := rs.translator.CreateCLR("001010000000001", "mme.example", "example", "gw.example", "example", 0)
 	mme, other := &diamtest.Conn{}, &diamtest.Conn{}
 	ch := make(chan *diam.Message, 1)
 	rs.pendingReqs[sid] = &pendingReq{ch: ch, peerHost: "mme.example", conn: mme}

@@ -67,17 +67,20 @@ type reusedAVP struct {
 // 7.3.1/2 gives SCEF-ID's M-bit but not its code, which is not checked
 // against TS 29.336.
 var reused29272 = map[uint32]reusedAVP{
-	13:  {"3GPP-Charging-Characteristics", "TS 29.061", true, false},
-	515: {"Max-Requested-Bandwidth-DL", "TS 29.214", true, false},
-	516: {"Max-Requested-Bandwidth-UL", "TS 29.214", true, false},
-	554: {"Extended-Max-Requested-BW-DL", "TS 29.214", false, false},
-	555: {"Extended-Max-Requested-BW-UL", "TS 29.214", false, false},
-	600: {"Visited-Network-Identifier", "TS 29.229", false, true},
-	628: {"Supported-Features", "TS 29.229", true, false},
-	629: {"Feature-List-ID", "TS 29.229", true, false},
-	630: {"Feature-List", "TS 29.229", true, false},
-	701: {"MSISDN", "TS 29.329", true, false},
-	848: {"Served-Party-IP-Address", "TS 32.299", true, false},
+	13:   {"3GPP-Charging-Characteristics", "TS 29.061", true, false},
+	515:  {"Max-Requested-Bandwidth-DL", "TS 29.214", true, false},
+	516:  {"Max-Requested-Bandwidth-UL", "TS 29.214", true, false},
+	554:  {"Extended-Max-Requested-BW-DL", "TS 29.214", false, false},
+	555:  {"Extended-Max-Requested-BW-UL", "TS 29.214", false, false},
+	600:  {"Visited-Network-Identifier", "TS 29.229", false, true},
+	625:  {"Confidentiality-Key", "TS 29.229", true, false}, // Table 6.3.1: M, V
+	626:  {"Integrity-Key", "TS 29.229", true, false},       // Table 6.3.1: M, V
+	628:  {"Supported-Features", "TS 29.229", true, false},
+	629:  {"Feature-List-ID", "TS 29.229", false, false}, // Table 6.3.1: V, must not M
+	630:  {"Feature-List", "TS 29.229", false, false},    // Table 6.3.1: V, must not M
+	701:  {"MSISDN", "TS 29.329", true, false},
+	3329: {"Maximum-UE-Availability-Time", "TS 29.338", false, false}, // Table 5.3.3.1/1: V, must not M; read from NOR only
+	848:  {"Served-Party-IP-Address", "TS 32.299", true, false},
 
 	1028: {"QoS-Class-Identifier", "TS 29.212", true, false},
 	1032: {"RAT-Type", "TS 29.212", true, true},

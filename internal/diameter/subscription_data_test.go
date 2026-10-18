@@ -929,7 +929,7 @@ func TestEncodeMIP6AgentInfo_Roundtrip(t *testing.T) {
 							DestinationHost:  "ha.example.com",
 							DestinationRealm: "example.com",
 						},
-						MIP6HomeLinkPrefix: "linkprefix-bytes",
+						MIP6HomeLinkPrefix: "4020010db8000000000000000000000000", // /64 2001:db8:: (RFC 5447 §4.2.4)
 					},
 				},
 			},
@@ -967,7 +967,7 @@ func TestEncodeMIP6AgentInfo_Roundtrip(t *testing.T) {
 	// 125 MIP6HomeLinkPrefix (note the "6" — fiorix symbol asymmetry).
 	prefix := findInGrouped(mipG, avp.MIP6HomeLinkPrefix, 0)
 	require.NotNil(t, prefix, "MIP6HomeLinkPrefix missing")
-	assert.Equal(t, []byte("linkprefix-bytes"), prefix.Data.Serialize())
+	assert.Equal(t, append([]byte{64, 0x20, 0x01, 0x0d, 0xb8}, make([]byte, 12)...), prefix.Data.Serialize())
 }
 
 // TestEncodeMIP6AgentInfo_Empty_Skipped — nil pointer + all-empty struct both
@@ -1283,7 +1283,7 @@ func TestEncodeEmergencyInfo_Roundtrip(t *testing.T) {
 		EmergencyInfo: &pb.EmergencyInfo{
 			MIP6AgentInfo: &pb.MIP6AgentInfo{
 				MIP6HomeAgentAddress: []string{"10.20.30.40"},
-				MIP6HomeLinkPrefix:   "emergency-prefix",
+				MIP6HomeLinkPrefix:   "40fd000000000000000000000000000000",
 			},
 		},
 	}
@@ -1299,7 +1299,7 @@ func TestEncodeEmergencyInfo_Roundtrip(t *testing.T) {
 	require.Len(t, addrs, 1, "expected one home agent address")
 	prefix := findInGrouped(mipG, avp.MIP6HomeLinkPrefix, 0)
 	require.NotNil(t, prefix)
-	assert.Equal(t, []byte("emergency-prefix"), prefix.Data.Serialize())
+	assert.Equal(t, append([]byte{64, 0xfd}, make([]byte, 15)...), prefix.Data.Serialize())
 }
 
 // TestEncodeEmergencyInfo_Empty_Skipped — nil pointer + nil MIP6 both

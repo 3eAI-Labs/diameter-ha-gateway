@@ -332,6 +332,7 @@ func TestCreateCLR(t *testing.T) {
 		"dest.3gppnetwork.org",
 		"hss.origin.3gppnetwork.org",
 		"origin.3gppnetwork.org",
+		0,
 	)
 
 	// RFC 6733 §8.8: <DiameterIdentity>;<high 32 bits>;<low 32 bits>[;<optional>],
@@ -339,7 +340,7 @@ func TestCreateCLR(t *testing.T) {
 	assert.Regexp(t, `^hss\.origin\.3gppnetwork\.org;[0-9]+;[0-9]+;cl$`, sid)
 	assert.NotContains(t, sid, "286011234567890")
 	_, other := NewTranslator().CreateCLR("286011234567890", "mme.dest.3gppnetwork.org",
-		"dest.3gppnetwork.org", "hss.origin.3gppnetwork.org", "origin.3gppnetwork.org")
+		"dest.3gppnetwork.org", "hss.origin.3gppnetwork.org", "origin.3gppnetwork.org", 0)
 	assert.NotEqual(t, sid, other, "Session-Ids are unique across translators")
 
 	// Verify message structure

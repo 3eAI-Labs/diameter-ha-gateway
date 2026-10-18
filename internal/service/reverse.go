@@ -182,13 +182,16 @@ func (rs *ReverseService) subscribe(topic, label string, handler func(*nats.Msg)
 // HandleCLR processes a Cancel-Location-Request triggered by the backend.
 func (rs *ReverseService) HandleCLR(msg *nats.Msg) {
 	rs.handleReverse(msg, "CLR", func(event *pb.S6aEvent, destHost, destRealm string) (*diam.Message, string) {
-		return rs.translator.CreateCLR(
+		m, sid := rs.translator.CreateCLR(
 			event.IMSI,
 			destHost,
 			destRealm,
 			rs.cfg.Server.OriginHost,
 			rs.cfg.Server.OriginRealm,
+			event.CancellationType,
 		)
+		_ = diameter.ApplyRequestExtras(m, "CLR", event) // validated in handleReverse
+		return m, sid
 	})
 }
 
@@ -196,7 +199,7 @@ func (rs *ReverseService) HandleCLR(msg *nats.Msg) {
 // backend.
 func (rs *ReverseService) HandleIDR(msg *nats.Msg) {
 	rs.handleReverse(msg, "IDR", func(event *pb.S6aEvent, destHost, destRealm string) (*diam.Message, string) {
-		return rs.translator.CreateIDR(
+		m, sid := rs.translator.CreateIDR(
 			event.IMSI,
 			destHost,
 			destRealm,
@@ -206,6 +209,8 @@ func (rs *ReverseService) HandleIDR(msg *nats.Msg) {
 			event.SubscriberData, // legacy hex-OctetString fallback
 			event.IDRFlags,
 		)
+		_ = diameter.ApplyRequestExtras(m, "IDR", event) // validated in handleReverse
+		return m, sid
 	})
 }
 
@@ -215,7 +220,7 @@ func (rs *ReverseService) HandleIDR(msg *nats.Msg) {
 // subset of APNs (used together with the APN-Configuration-Profile bit).
 func (rs *ReverseService) HandleDSR(msg *nats.Msg) {
 	rs.handleReverse(msg, "DSR", func(event *pb.S6aEvent, destHost, destRealm string) (*diam.Message, string) {
-		return rs.translator.CreateDSR(
+		m, sid := rs.translator.CreateDSR(
 			event.IMSI,
 			destHost,
 			destRealm,
@@ -224,6 +229,8 @@ func (rs *ReverseService) HandleDSR(msg *nats.Msg) {
 			event.DSRFlags,
 			event.WithdrawnAPNContextIDs,
 		)
+		_ = diameter.ApplyRequestExtras(m, "DSR", event) // validated in handleReverse
+		return m, sid
 	})
 }
 
@@ -232,13 +239,15 @@ func (rs *ReverseService) HandleDSR(msg *nats.Msg) {
 // every subscriber the MME holds from this HSS (TS 29.272 §7.2.15).
 func (rs *ReverseService) HandleRSR(msg *nats.Msg) {
 	rs.handleReverse(msg, "RSR", func(event *pb.S6aEvent, destHost, destRealm string) (*diam.Message, string) {
-		return rs.translator.CreateRSR(
+		m, sid := rs.translator.CreateRSR(
 			event.IMSI,
 			destHost,
 			destRealm,
 			rs.cfg.Server.OriginHost,
 			rs.cfg.Server.OriginRealm,
 		)
+		_ = diameter.ApplyRequestExtras(m, "RSR", event) // validated in handleReverse
+		return m, sid
 	})
 }
 
@@ -261,6 +270,12 @@ func (rs *ReverseService) handleReverse(
 	var event pb.S6aEvent
 	if err := json.Unmarshal(msg.Data, &event); err != nil {
 		logger.Error("Failed to unmarshal reverse event", err, logger.String("cmd", cmd))
+		rs.sendNatsError(msg, 5004) // INVALID_AVP_VALUE
+		return
+	}
+
+	if err := diameter.ValidateRequestExtras(cmd, &event); err != nil {
+		logger.Warn("Reverse event has an invalid field", logger.String("cmd", cmd), logger.String("err", err.Error()))
 		rs.sendNatsError(msg, 5004) // INVALID_AVP_VALUE
 		return
 	}
@@ -527,9 +542,7 @@ func (rs *ReverseService) sendNatsResponse(reqMsg *nats.Msg, diamMsg *diam.Messa
 		return
 	}
 
-	resultCode, expCode := diameter.AnswerResult(diamMsg)
-	resp := pb.S6aAnswer{ResultCode: resultCode, ExperimentalResultCode: expCode}
-	data, _ := json.Marshal(resp)
+	data, _ := json.Marshal(diameter.DecodeMMEAnswer(diamMsg))
 	rs.natsClient.Respond(reqMsg, data)
 }
 

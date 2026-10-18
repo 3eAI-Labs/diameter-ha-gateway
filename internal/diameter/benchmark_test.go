@@ -78,6 +78,7 @@ func BenchmarkTranslator_CreateCLR(b *testing.B) {
 			"dest.3gppnetwork.org",
 			"hss.origin.3gppnetwork.org",
 			"origin.3gppnetwork.org",
+			0,
 		)
 	}
 }

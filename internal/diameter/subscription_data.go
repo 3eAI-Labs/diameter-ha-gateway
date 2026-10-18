@@ -926,8 +926,10 @@ func encodeMIP6AgentInfo(m *pb.MIP6AgentInfo) *diam.GroupedAVP {
 			g.AddAVP(diam.NewAVP(avp.MIPHomeAgentHost, avp.Mbit, 0, host))
 		}
 	}
-	if m.MIP6HomeLinkPrefix != "" {
-		g.AddAVP(diam.NewAVP(avp.MIP6HomeLinkPrefix, avp.Mbit, 0, datatype.OctetString(m.MIP6HomeLinkPrefix)))
+	// Hex of the prefix length octet and the 16-octet prefix (RFC 5447
+	// §4.2.4); invalid hex leaves the AVP out.
+	if b, err := hex.DecodeString(m.MIP6HomeLinkPrefix); err == nil && len(b) > 0 {
+		g.AddAVP(diam.NewAVP(avp.MIP6HomeLinkPrefix, avp.Mbit, 0, datatype.OctetString(b)))
 	}
 	if len(g.AVP) == 0 {
 		return nil

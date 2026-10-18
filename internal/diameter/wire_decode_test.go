@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"testing"
 
+	pb "github.com/3eAI-Labs/diameter-ha-gateway-client"
+
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/avp"
 	"github.com/fiorix/go-diameter/v4/diam/datatype"
@@ -58,4 +60,48 @@ func TestToS6aEvent_AlertReasonFromWire(t *testing.T) {
 	event, err := NewTranslator().ToS6aEvent(fromWire(t, m), "nor-wire")
 	require.NoError(t, err)
 	assert.Equal(t, uint32(1), event.AlertReason)
+}
+
+// TestULAFlags_OnlyOnSuccess: ULA-Flags and PUA-Flags "shall be present
+// only when the Result-Code AVP is DIAMETER_SUCCESS" (TS 29.272 Tables
+// 5.2.1.1.1/2, 5.2.1.3.1/2); a reply that failed carried them too.
+func TestULAFlags_OnlyOnSuccess(t *testing.T) {
+	tr := NewTranslator()
+	for _, tc := range []struct {
+		code, flagsAVP uint32
+		reply          string
+		want           bool
+	}{
+		{316, avp.ULAFlags, `{"result_code":2001,"ula_flags":1}`, true},
+		{316, avp.ULAFlags, `{"result_code":5012,"ula_flags":1}`, false},
+		{316, avp.ULAFlags, `{"experimental_result_code":5001,"ula_flags":1}`, false},
+		{321, avp.PUAFlags, `{"result_code":2001,"pua_flags":1}`, true},
+		{321, avp.PUAFlags, `{"experimental_result_code":5001,"pua_flags":1}`, false},
+	} {
+		ans, err := tr.ToDiameterAnswer([]byte(tc.reply), s6aRequest(tc.code))
+		require.NoError(t, err)
+		_, err = fromWire(t, ans).FindAVP(tc.flagsAVP, vendorID3GPP)
+		assert.Equal(t, tc.want, err == nil, "%d %s", tc.code, tc.reply)
+	}
+}
+
+// TestCreateIDR_EmptySubscriptionData: an IDR that only requests state or
+// location carries an empty Subscription-Data, which is mandatory (TS
+// 29.272 §5.2.2.1.3); it was left out.
+func TestCreateIDR_EmptySubscriptionData(t *testing.T) {
+	for name, profile := range map[string]*pb.SubscriptionProfile{"nil": nil, "empty": {}} {
+		m, _ := NewTranslator().CreateIDR("001010000000001", "mme", "r", "hss", "r", profile, "", 4)
+		sd, err := fromWire(t, m).FindAVP(avp.SubscriptionData, vendorID3GPP)
+		require.NoError(t, err, name)
+		assert.Empty(t, sd.Data.(*diam.GroupedAVP).AVP, name)
+	}
+}
+
+// TestCreateCLR_CancellationType: the CLR carries the application's
+// cancellation_type (TS 29.272 §7.3.24); it was always 0.
+func TestCreateCLR_CancellationType(t *testing.T) {
+	m, _ := NewTranslator().CreateCLR("001010000000001", "mme", "r", "hss", "r", 2) // SUBSCRIPTION_WITHDRAWAL
+	ct, err := fromWire(t, m).FindAVP(avp.CancellationType, vendorID3GPP)
+	require.NoError(t, err)
+	assert.Equal(t, datatype.Enumerated(2), ct.Data)
 }

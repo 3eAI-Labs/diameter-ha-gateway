@@ -107,7 +107,7 @@ func TestCompleteAnswer_NoResultAnswered5012(t *testing.T) {
 // "REQ, PXY" (TS 29.272 §7.2.x); go-diameter's NewRequest set R only.
 func TestGatewayRequests_Proxiable(t *testing.T) {
 	tr := NewTranslator()
-	clr, _ := tr.CreateCLR("001010000000001", "mme", "r", "gw", "r")
+	clr, _ := tr.CreateCLR("001010000000001", "mme", "r", "gw", "r", 0)
 	rsr, _ := tr.CreateRSR("00101", "mme", "r", "gw", "r")
 	dsr, _ := tr.CreateDSR("001010000000001", "mme", "r", "gw", "r", 1, nil)
 	idr, _ := tr.CreateIDR("001010000000001", "mme", "r", "gw", "r", nil, "", 0)
