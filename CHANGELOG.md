@@ -9,6 +9,54 @@ describes what changed for an installation of 0.9.4.
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-10-18
+
+Chart 0.3.4 (values and schema unchanged). An OCS can re-authorise or abort a Gy or Ro session
+through the gateway (RAR, ASR under Application-Id 4). Gx applications: a second RAR or ASR for a
+session while one is pending is now refused with 3004.
+
+### Added
+
+- **OCS-initiated Gy and Ro requests** (TS 32.299 §6.4.4, §6.4.12). An OCS sends a Re-Auth-Request
+  or Abort-Session-Request to a PGW or CTF by a NATS request to `diameter.gy.rar`,
+  `diameter.gy.asr`, `diameter.ro.rar` or `diameter.ro.asr`; the reply is the client's answer.
+  - Each Gy and Ro session is bound to the peer whose CCR-Initial or -Update carries it, until its
+    CCR-Termination or the peer's disconnect, under the Gx eviction policy
+    (`charging.gx.session_eviction`). The request goes over that peer's connection; for a session
+    without a binding, to `header.destination_host`, else `header.origin_host`.
+  - RAR fields: `re_auth_request_type` (0 AUTHORIZE_ONLY, the default, or 1
+    AUTHORIZE_AUTHENTICATE), `user_name`, `cc_sub_session_id`, `gsu_pool_identifier`,
+    `service_identifier`, `rating_group`; ASR: `user_name`. Destination-Realm is
+    `header.destination_realm`, else the gateway's realm, as on Gx.
+  - The reply carries `result_code` (the Experimental-Result-Code when the client sent one),
+    `experimental_result_code`, `error_message`, `origin_host`, `origin_realm` and the RAA's
+    identifiers. A 3006 answer is passed on as the result code; the Redirect-Host is not, and the
+    gateway does not follow it.
+  - Refusals: 3002 when no client is connected, the write fails, or the client disconnects or does
+    not answer within `server.reverse_timeout`; 5005 without `header.session_id`; 5004 for a
+    request that is not JSON or a `re_auth_request_type` other than 0 or 1; 3004 for a second RAR
+    (or ASR) for a session while one is pending.
+  - Requests wait for their clients concurrently: a client that does not answer delays no other
+    session. At most 1024 wait at a time; past that, a request is refused with 3004. An answer is matched on its hop-by-hop identifier as well as its Session-Id, so a
+    late answer to a timed-out request does not answer the next one.
+
+### Fixed
+
+- **Gx RAR and ASR** (`diameter.gx.rar`, `diameter.gx.asr`):
+  - One PCEF not answering held up every request on the subject for up to `server.reverse_timeout`
+    each; requests now wait for their PCEFs concurrently, at most 1024 at a time (3004 past that).
+  - A late RAA to a timed-out RAR answered the RAR sent after it for the same session; an answer is
+    now matched on its command and hop-by-hop identifier too.
+  - A second RAR or ASR for a session while one is pending is refused with 3004; it replaced the
+    first one's wait, which then timed out.
+
+### Changed
+
+- An RAA or ASA is routed by its Application-Id: Gx (16777238) and Credit-Control (4) answers
+  reach their own service. Before, every RAA and ASA went to the Gx service, whatever its
+  application.
+- The session-binding log lines and counters carry `app` (`gx`, `cc`).
+
 ## [0.14.0] — 2026-10-18
 
 Chart 0.3.3 (values and schema unchanged). Gx, Gy and Ro release: Gx follows TS 29.212 Table
@@ -390,7 +438,8 @@ No change to the gateway's behaviour, configuration or NATS contract.
 See the [README](README.md#known-limitations). New in this release: gateway-initiated requests
 reach directly connected peers only, a consequence of binding identities to connections.
 
-[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.11.0...v0.12.0

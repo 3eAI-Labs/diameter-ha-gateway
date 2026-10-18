@@ -88,25 +88,6 @@ type GyAnswer struct {
 	ServiceInformation *charging.ServiceInformation `json:"service_information,omitempty"`
 }
 
-// GyReAuthRequest represents a Re-Auth-Request from OCS to PGW
-type GyReAuthRequest struct {
-	Header            charging.DiameterHeader     `json:"header"`
-	ReAuthRequestType uint32                      `json:"re_auth_request_type"`
-	CCSubSessionID    uint64                      `json:"cc_sub_session_id,omitempty"`
-	GSUPoolIdentifier uint32                      `json:"gsu_pool_identifier,omitempty"`
-	ServiceIdentifier uint32                      `json:"service_identifier,omitempty"`
-	RatingGroup       uint32                      `json:"rating_group,omitempty"`
-	UserEquipmentInfo *charging.UserEquipmentInfo `json:"user_equipment_info,omitempty"`
-}
-
-// GyReAuthAnswer represents a Re-Auth-Answer from PGW to OCS
-type GyReAuthAnswer struct {
-	ResultCode     uint32 `json:"result_code"`
-	OriginHost     string `json:"origin_host,omitempty"`
-	OriginRealm    string `json:"origin_realm,omitempty"`
-	CCSubSessionID uint64 `json:"cc_sub_session_id,omitempty"`
-}
-
 // CCRequestTypeName returns the name of the CC-Request-Type
 func CCRequestTypeName(t uint32) string {
 	if name, ok := charging.CCRequestTypeNames[t]; ok {

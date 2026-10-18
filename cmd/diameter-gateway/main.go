@@ -125,12 +125,20 @@ func main() {
 		// every session binding for the dropped peer.
 		peerManager.AddDropListener(gxRegistry.DropPeer)
 
+		// The Gy and Ro sessions (Application-Id 4) get a registry of their
+		// own, under the same eviction policy, for the OCS's RAR and ASR.
+		ccRegistry := gx.NewSessionRegistry(gx.RegistryOptions{
+			Policy: gx.PolicyFromConfig(cfg.Charging.Gx.SessionEviction),
+			App:    "cc",
+		})
+		peerManager.AddDropListener(ccRegistry.DropPeer)
+
 		gxHandler := gx.NewHandler(natsClient, peerManager, chargingTimeout).
 			WithSessionRegistry(gxRegistry)
 		dispatcher := charging.NewDispatcher(
 			gxHandler,
-			gy.NewHandler(natsClient, peerManager, chargingTimeout),
-			ro.NewHandler(natsClient, peerManager, chargingTimeout),
+			gy.NewHandler(natsClient, peerManager, chargingTimeout).WithSessionRegistry(ccRegistry),
+			ro.NewHandler(natsClient, peerManager, chargingTimeout).WithSessionRegistry(ccRegistry),
 			cfg.Charging.GyContextIDs,
 			cfg.Charging.RoContextIDs,
 			nil, // no default — unmatched Service-Context-Id rejected with 5012
@@ -153,6 +161,17 @@ func main() {
 		server.SetGxAnswerHandler(gxReverse)
 		logger.Info("Gx reverse-direction service enabled (RAR/ASR)",
 			logger.String("topics", "diameter.gx.{rar,asr}"))
+
+		// Gy/Ro reverse direction (OCS → Gateway → PGW/CTF): RAR and ASR
+		// over NATS (TS 32.299 §6.4.4, §6.4.12).
+		ccReverse := service.NewCCReverseService(natsClient, peerManager, ccRegistry, cfg)
+		server.SetCCAnswerHandler(ccReverse)
+		if err := ccReverse.StartListening(); err != nil {
+			logger.Error("Failed to start the Gy/Ro reverse-direction service", err)
+		} else {
+			logger.Info("Gy/Ro reverse-direction service enabled (RAR/ASR)",
+				logger.String("topics", "diameter.{gy,ro}.{rar,asr}"))
+		}
 	}
 
 	// 6.1 Initialize SGd Handler (SMS over Diameter - TS 29.338)

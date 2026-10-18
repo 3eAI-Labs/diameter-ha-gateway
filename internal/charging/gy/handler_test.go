@@ -198,7 +198,6 @@ func TestCCRequestTypeNames(t *testing.T) {
 
 func TestNATSTopics(t *testing.T) {
 	assert.Equal(t, "diameter.gy.ccr", TopicGyCCR)
-	assert.Equal(t, "diameter.gy.rar", TopicGyRAR)
 }
 
 // =============================================================================

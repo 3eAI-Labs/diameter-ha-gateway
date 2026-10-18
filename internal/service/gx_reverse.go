@@ -45,6 +45,7 @@ import (
 // GxReverseService routes PCRF-initiated RAR/ASR over NATS into Diameter
 // requests for the PCEF peer that originated the Gx session.
 type GxReverseService struct {
+	inflight      inflight
 	natsClient    *internalNats.Client
 	peerManager   *diameter.PeerManager
 	gxTranslator  *gx.Translator
@@ -66,7 +67,8 @@ type gxPendingReq struct {
 	peerHost string
 	verb     string    // "RAR" / "ASR" — for metrics on drop
 	conn     diam.Conn // only an answer arriving on this connection is delivered
-	hopByHop uint32    // identifies the request on conn, for an answer without Session-Id
+	code     uint32    // command code of the request
+	hopByHop uint32    // identifies the request on conn (RFC 6733 §6.2)
 }
 
 // NewGxReverseService wires up the service and registers a peer-drop
@@ -85,6 +87,7 @@ func NewGxReverseService(
 	cfg *config.Config,
 ) *GxReverseService {
 	s := &GxReverseService{
+		inflight:      newInflight(),
 		natsClient:    nc,
 		peerManager:   pm,
 		gxTranslator:  gx.NewTranslator(),
@@ -126,7 +129,10 @@ func (s *GxReverseService) StartListening() {
 }
 
 func (s *GxReverseService) subscribe(topic, label string, handler func(*nats.Msg)) {
-	if _, err := s.natsClient.QueueSubscribe(topic, "diameter-gw", handler); err != nil {
+	// Each request waits for its PCEF concurrently (inflight.go), so a PCEF
+	// that does not answer delays no other session.
+	busy := func(m *nats.Msg) { s.replyError(m, 3004) }
+	if _, err := s.natsClient.QueueSubscribe(topic, "diameter-gw", s.inflight.wrap(handler, busy)); err != nil {
 		logger.Error("Failed to subscribe to Gx reverse topic", err,
 			logger.String("topic", topic),
 			logger.String("cmd", label))
@@ -255,9 +261,17 @@ func (s *GxReverseService) executeGxHop(
 	// which RFC 6733 §3 forbids it.
 
 	respCh := make(chan *diam.Message, 1)
+	pr := &gxPendingReq{ch: respCh, peerHost: destHost, verb: cmd, conn: conn,
+		code: diamMsg.Header.CommandCode, hopByHop: diamMsg.Header.HopByHopID}
 	s.mu.Lock()
-	s.pendingReqs[sessionID] = &gxPendingReq{ch: respCh, peerHost: destHost, verb: cmd, conn: conn,
-		hopByHop: diamMsg.Header.HopByHopID}
+	if _, busy := s.pendingReqs[sessionID]; busy {
+		s.mu.Unlock()
+		logger.Warn("Gx reverse request refused: one is pending for the session",
+			logger.String("session_id", sessionID), logger.String("cmd", cmd))
+		s.replyError(msg, 3004)
+		return
+	}
+	s.pendingReqs[sessionID] = pr
 	s.mu.Unlock()
 
 	logger.Info(fmt.Sprintf("Sending %s to PCEF", cmd),
@@ -270,7 +284,7 @@ func (s *GxReverseService) executeGxHop(
 
 	if _, err := diamMsg.WriteTo(conn); err != nil {
 		logger.Error(fmt.Sprintf("Failed to send %s", cmd), err)
-		s.removePending(sessionID)
+		s.removePending(sessionID, pr)
 		s.replyError(msg, 3004)
 		return
 	}
@@ -285,7 +299,7 @@ func (s *GxReverseService) executeGxHop(
 			logger.String("timeout", timeout.String()))
 		monitor.IncrementCounter("diameter_gx_reverse_timeout_total",
 			map[string]string{"cmd": cmd})
-		s.removePending(sessionID)
+		s.removePending(sessionID, pr)
 		s.replyError(msg, 3002)
 	}
 }
@@ -410,11 +424,18 @@ func (s *GxReverseService) deliverAnswer(c diam.Conn, m *diam.Message) {
 			logger.String("session_id", sessionID), logger.String("expected_peer", pr.peerHost))
 		return
 	}
+	// The same command and hop-by-hop identifier (RFC 6733 §6.2): a late
+	// answer to a request that timed out does not answer the next one.
+	if pr.code != m.Header.CommandCode || pr.hopByHop != m.Header.HopByHopID {
+		return
+	}
+	// Removed before the waiter wakes, which may register a redirect hop
+	// under the same Session-Id.
+	s.removePending(sessionID, pr)
 	select {
 	case pr.ch <- m:
 	default:
 	}
-	s.removePending(sessionID)
 }
 
 // pendingFor finds the request m answers: by its Session-Id or, for an
@@ -434,9 +455,12 @@ func (s *GxReverseService) pendingFor(c diam.Conn, m *diam.Message) (string, *gx
 	return "", nil
 }
 
-func (s *GxReverseService) removePending(sid string) {
+// removePending removes pr, and not a request registered after it.
+func (s *GxReverseService) removePending(sid string, pr *gxPendingReq) {
 	s.mu.Lock()
-	delete(s.pendingReqs, sid)
+	if s.pendingReqs[sid] == pr {
+		delete(s.pendingReqs, sid)
+	}
 	s.mu.Unlock()
 }
 

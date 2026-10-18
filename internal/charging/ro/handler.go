@@ -23,6 +23,7 @@ type Handler struct {
 	translator  *Translator
 	peerManager *diameter.PeerManager
 	timeout     time.Duration
+	binder      charging.SessionBinder // optional; binds sessions for OCS-initiated RAR/ASR
 }
 
 // NewHandler creates a new Ro handler
@@ -36,6 +37,13 @@ func NewHandler(nc nats.Requester, pm *diameter.PeerManager, timeout time.Durati
 		peerManager: pm,
 		timeout:     timeout,
 	}
+}
+
+// WithSessionRegistry binds each session to the peer whose CCRs carry it,
+// so an OCS RAR or ASR for the session goes back over that connection.
+func (h *Handler) WithSessionRegistry(b charging.SessionBinder) *Handler {
+	h.binder = b
+	return h
 }
 
 // HandleCCR handles Credit-Control-Request messages for Ro interface
@@ -80,6 +88,7 @@ func (h *Handler) HandleCCR(c diam.Conn, m *diam.Message) {
 
 	// The peer was registered at CER; the request's Origin-Host does not re-bind it.
 	h.peerManager.Touch(c)
+	charging.TrackSession(h.binder, event.CCRequestType, event.Header.SessionID, h.peerManager.HostOf(c))
 
 	// Route to NATS
 	respData, err := h.natsClient.Request(TopicRoCCR, event, h.timeout)

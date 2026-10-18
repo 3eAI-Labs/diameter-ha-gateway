@@ -78,7 +78,7 @@ func TestGxDeliverAnswer_OnlyFromTheRequestsConnection(t *testing.T) {
 	s := &GxReverseService{pendingReqs: map[string]*gxPendingReq{}}
 	pcef, other := &diamtest.Conn{}, &diamtest.Conn{}
 	ch := make(chan *diam.Message, 1)
-	s.pendingReqs["gx-1"] = &gxPendingReq{ch: ch, peerHost: "pgw.example", verb: "RAR", conn: pcef}
+	s.pendingReqs["gx-1"] = &gxPendingReq{ch: ch, peerHost: "pgw.example", verb: "RAR", conn: pcef, code: 258, hopByHop: 1}
 
 	raa := diam.NewMessage(258, 0, 16777238, 1, 2, nil)
 	raa.NewAVP(avp.SessionID, avp.Mbit, 0, datatype.UTF8String("gx-1"))

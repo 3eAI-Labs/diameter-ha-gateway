@@ -29,8 +29,8 @@ applications are not checked against their specifications yet (see
 | S6a (TS 29.272) | MME ⇄ HSS | ULR, AIR, PUR, NOR | CLR, IDR, DSR, RSR |
 | S13 (TS 29.272) | MME ⇄ EIR | ECR | — |
 | Gx (TS 29.212) | PCEF ⇄ PCRF | CCR | RAR, ASR |
-| Gy (RFC 4006, TS 32.299) | PGW ⇄ OCS | CCR | — |
-| Ro (RFC 4006, TS 32.299) | IMS ⇄ OCS | CCR | — |
+| Gy (RFC 4006, TS 32.299) | PGW ⇄ OCS | CCR | RAR, ASR |
+| Ro (RFC 4006, TS 32.299) | IMS ⇄ OCS | CCR | RAR, ASR |
 | SGd (TS 29.338) | MME ⇄ SMSC | OFR, TFR | TFR |
 | S6c (TS 29.338) | SMSC ⇄ HSS; ALR also MME ⇄ SMSC | SRR, ALR, RDR | SRR, ALR, RDR |
 
@@ -44,6 +44,11 @@ applications are not checked against their specifications yet (see
   peer the application names and replies with the peer's result. S6c and SGd share the
   `diameter.sgd.*` subjects; an S6c or SGd request without `destination_host` (and, for TFR,
   `mme_name`) goes to any connected peer.
+- **Gx, Gy and Ro sessions** are bound to the peer whose CCRs carry them, until its
+  CCR-Termination or disconnect. The PCRF's RAR and ASR (`diameter.gx.rar`, `diameter.gx.asr`) and
+  the OCS's (`diameter.gy.rar`, `diameter.gy.asr`, `diameter.ro.rar`, `diameter.ro.asr`) go back
+  over that peer's connection. A request for a session without a binding goes to `origin_host`
+  (Gx), or to `destination_host`, else `origin_host` (Gy, Ro).
 - **Base protocol (RFC 6733):** capabilities exchange with a peer whitelist (source IP and
   Origin-Host), watchdog (DWR/DWA), disconnect (DPR/DPA) and drain on shutdown, Failed-AVP on
   missing mandatory AVPs, Redirect-Host handling with a per-command retry policy, per-peer rate
@@ -110,11 +115,12 @@ answers the request with its publish acknowledgement, and the requester never se
   from the application's reply is not sent, and the omission is logged.
 - **Fixed timeouts.** The S6a/S13 NATS request timeout is 2 s; `nats.connect_timeout` and
   `nats.request_timeout` are not used.
-- **In-memory state per replica.** Pending gateway-initiated requests, Gx session-to-peer bindings
-  and the redirect cache live in one replica's memory and are lost when it stops.
-- **No OCS-initiated Gy or Ro requests.** RAR and ASR under Application-Id 4 (TS 32.299 §6.4.6-6.4.13)
-  are not implemented; an OCS cannot ask the gateway to re-authorise or abort a credit-control
-  session.
+- **In-memory state per replica.** Pending gateway-initiated requests, Gx, Gy and Ro
+  session-to-peer bindings and the redirect cache live in one replica's memory and are lost when
+  it stops.
+- **Gy and Ro redirects are not followed.** A Gy or Ro client answering a RAR or ASR with 3006
+  (Redirect-Host) is reported to the OCS with that result code only; the Redirect-Host is not passed
+  on and the gateway does not retry elsewhere.
 - **Gx ASR is not part of TS 29.212.** `diameter.gx.asr` sends an RFC 4006 Abort-Session-Request,
   which a PCEF need not support; TS 29.212 ends an IP-CAN session with a RAR, or a CCA to a CCR
   update, carrying `session_release_cause` (§4.5.9).

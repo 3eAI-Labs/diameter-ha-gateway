@@ -76,6 +76,7 @@ type GxSessionRegistry struct {
 	bindings map[string]*SessionBinding
 	policy   EvictionPolicy
 	now      func() time.Time
+	app      string
 }
 
 // EvictionPolicy is the 3-parameter hybrid formula governing TTL eviction.
@@ -106,6 +107,9 @@ type EvictionPolicy struct {
 type RegistryOptions struct {
 	Policy EvictionPolicy
 	Now    func() time.Time
+	// App labels the registry's metrics and logs: "gx" (the default), or
+	// "cc" for the Gy/Ro sessions of Application-Id 4.
+	App string
 }
 
 // NewSessionRegistry constructs a registry with the given options.
@@ -114,10 +118,15 @@ func NewSessionRegistry(opts RegistryOptions) *GxSessionRegistry {
 	if now == nil {
 		now = time.Now
 	}
+	app := opts.App
+	if app == "" {
+		app = "gx"
+	}
 	return &GxSessionRegistry{
 		bindings: make(map[string]*SessionBinding),
 		policy:   opts.Policy,
 		now:      now,
+		app:      app,
 	}
 }
 
@@ -138,7 +147,8 @@ func (r *GxSessionRegistry) Bind(sessionID, peerHost string) {
 	now := r.now()
 	if existing, ok := r.bindings[sessionID]; ok {
 		if existing.PeerHost != peerHost {
-			logger.Warn("Gx session claimed by a different peer — refused",
+			logger.Warn("Session claimed by a different peer — refused",
+				logger.String("app", r.app),
 				logger.String("session_id", sessionID),
 				logger.String("bound_peer", existing.PeerHost),
 				logger.String("claiming_peer", peerHost))
@@ -153,7 +163,7 @@ func (r *GxSessionRegistry) Bind(sessionID, peerHost string) {
 		LastSeen: now,
 	}
 	monitor.IncrementCounter("diameter_gx_session_bind_total",
-		map[string]string{"peer": peerHost})
+		map[string]string{"peer": peerHost, "app": r.app})
 }
 
 // Lookup returns the peer host bound to sessionID. Returns ("", false)
@@ -174,7 +184,7 @@ func (r *GxSessionRegistry) Lookup(sessionID string) (string, bool) {
 		delete(r.bindings, sessionID)
 		r.mu.Unlock()
 		monitor.IncrementCounter("diameter_gx_session_evicted_total",
-			map[string]string{"reason": "stale_on_lookup"})
+			map[string]string{"reason": "stale_on_lookup", "app": r.app})
 		return "", false
 	}
 	return b.PeerHost, true
@@ -190,7 +200,7 @@ func (r *GxSessionRegistry) Unbind(sessionID, peerHost string) {
 	defer r.mu.Unlock()
 	if b, ok := r.bindings[sessionID]; ok && b.PeerHost == peerHost {
 		delete(r.bindings, sessionID)
-		monitor.IncrementCounter("diameter_gx_session_unbind_total", nil)
+		monitor.IncrementCounter("diameter_gx_session_unbind_total", map[string]string{"app": r.app})
 	}
 }
 
@@ -208,12 +218,13 @@ func (r *GxSessionRegistry) DropPeer(peerHost string, reason diameter.PeerDropRe
 	}
 	r.mu.Unlock()
 	if dropped > 0 {
-		logger.Info("Gx session bindings cleared after peer drop",
+		logger.Info("Session bindings cleared after peer drop",
+			logger.String("app", r.app),
 			logger.String("peer", peerHost),
 			logger.String("reason", string(reason)),
 			logger.Int("dropped", dropped))
 		monitor.IncrementCounter("diameter_gx_session_evicted_total",
-			map[string]string{"reason": "peer_drop"})
+			map[string]string{"reason": "peer_drop", "app": r.app})
 	}
 }
 

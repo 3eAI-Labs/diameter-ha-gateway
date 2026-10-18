@@ -204,6 +204,8 @@ func text(a *diam.AVP) string {
 		return string(v)
 	case datatype.IPFilterRule:
 		return string(v)
+	case datatype.DiameterIdentity:
+		return string(v)
 	}
 	return ""
 }

@@ -82,6 +82,7 @@ type DiameterServer struct {
 	sgdHandler       SGdHandler
 	sgdAnswerHandler SGdAnswerHandler
 	gxAnswerHandler  GxAnswerHandler
+	ccAnswerHandler  GxAnswerHandler // Gy/Ro (Application-Id 4) RAA/ASA
 	peerManager      *PeerManager
 	translator       *Translator      // builds DPA / future answer messages for handlers that don't go through PeerManager
 	rateLimiter      *PeerRateLimiter // per-peer admit gate; nil = no rate limiting
@@ -142,6 +143,37 @@ func (s *DiameterServer) SetSGdAnswerHandler(sah SGdAnswerHandler) {
 // SetGxAnswerHandler sets the Gx reverse-direction answer handler (RAA/ASA).
 func (s *DiameterServer) SetGxAnswerHandler(gah GxAnswerHandler) {
 	s.gxAnswerHandler = gah
+}
+
+const (
+	gxApplicationID = 16777238 // TS 29.212
+	ccApplicationID = 4        // RFC 8506: Gy and Ro
+)
+
+// SetCCAnswerHandler sets the handler of the RAA and ASA a Gy or Ro client
+// sends for a gateway-issued RAR or ASR (Application-Id 4).
+func (s *DiameterServer) SetCCAnswerHandler(h GxAnswerHandler) {
+	s.ccAnswerHandler = h
+}
+
+// registerReverseAnswers routes the RAA and ASA answering gateway-issued
+// requests. They come back under both Gx and Credit-Control, so each is
+// routed by its Application-Id, which go-diameter's ServeMux matches ahead
+// of the command name.
+func (s *DiameterServer) registerReverseAnswers() {
+	reverse := []struct {
+		app uint32
+		h   GxAnswerHandler
+	}{{gxApplicationID, s.gxAnswerHandler}, {ccApplicationID, s.ccAnswerHandler}}
+	for _, r := range reverse {
+		if r.h == nil {
+			continue
+		}
+		s.stateMachine.HandleIdx(diam.CommandIndex{AppID: r.app, Code: diam.ReAuth}, diam.HandlerFunc(r.h.HandleRAA))
+		s.stateMachine.HandleIdx(diam.CommandIndex{AppID: r.app, Code: diam.AbortSession}, diam.HandlerFunc(r.h.HandleASA))
+		logger.Info("reverse-direction answer handlers registered (RAA/ASA)",
+			logger.Int("application_id", int(r.app)))
+	}
 }
 
 func (s *DiameterServer) Start(ctx context.Context) error {
@@ -224,11 +256,7 @@ func (s *DiameterServer) Start(ctx context.Context) error {
 
 	// Gx Answer Handlers (Reverse flow: PCEF → PCRF reply for gateway-issued
 	// RAR/ASR).
-	if s.gxAnswerHandler != nil {
-		s.stateMachine.HandleFunc("RAA", s.gxAnswerHandler.HandleRAA) // Re-Auth-Answer
-		s.stateMachine.HandleFunc("ASA", s.gxAnswerHandler.HandleASA) // Abort-Session-Answer
-		logger.Info("Gx reverse-direction answer handlers registered (RAA/ASA)")
-	}
+	s.registerReverseAnswers()
 
 	logger.Info("Starting Diameter Server",
 		logger.String("addr", s.cfg.Server.ListenAddr),
