@@ -45,7 +45,7 @@ func TestToCCREvent_IPCANType(t *testing.T) {
 	event, err := tr.ToCCREvent(m, "trace-2")
 	require.NoError(t, err)
 
-	assert.Equal(t, uint32(IPCANType3GPP_EPS), event.IPCANType)
+	assert.Equal(t, u(IPCANType3GPP_EPS), event.IPCANType)
 }
 
 func TestToCCREvent_RATType(t *testing.T) {
@@ -58,7 +58,7 @@ func TestToCCREvent_RATType(t *testing.T) {
 	event, err := tr.ToCCREvent(m, "trace-3")
 	require.NoError(t, err)
 
-	assert.Equal(t, uint32(1004), event.RATType)
+	assert.Equal(t, u(1004), event.RATType)
 }
 
 func TestToCCREvent_FramedIPAddress(t *testing.T) {
@@ -103,14 +103,14 @@ func TestToCCREvent_EventTriggers(t *testing.T) {
 	m := buildTestGxCCR(t, charging.CCRequestTypeUpdate, 1)
 
 	// Add Event-Trigger AVPs
-	m.NewAVP(1006, avp.Mbit|avp.Vbit, 10415, datatype.Enumerated(EventTriggerRATTypeChange))
+	m.NewAVP(1006, avp.Mbit|avp.Vbit, 10415, datatype.Enumerated(EventTriggerRAIChange))
 	m.NewAVP(1006, avp.Mbit|avp.Vbit, 10415, datatype.Enumerated(EventTriggerUserLocationChange))
 
 	event, err := tr.ToCCREvent(m, "trace-6")
 	require.NoError(t, err)
 
 	require.Len(t, event.EventTrigger, 2)
-	assert.Contains(t, event.EventTrigger, EventTriggerRATTypeChange)
+	assert.Contains(t, event.EventTrigger, EventTriggerRAIChange)
 	assert.Contains(t, event.EventTrigger, EventTriggerUserLocationChange)
 }
 
@@ -179,7 +179,7 @@ func TestToCCAMessage_WithChargingRules(t *testing.T) {
 				ChargingRuleName: []string{"rule1", "rule2"},
 			},
 		},
-		EventTrigger: []uint32{EventTriggerRATTypeChange, EventTriggerUserLocationChange},
+		EventTrigger: []uint32{EventTriggerRAIChange, EventTriggerUserLocationChange},
 	}
 
 	cca, err := tr.ToCCAMessage(answer, req)
@@ -325,7 +325,7 @@ func TestEventTriggerConstants(t *testing.T) {
 	assert.Equal(t, uint32(0), EventTriggerSGSNChange)
 	assert.Equal(t, uint32(1), EventTriggerQoSChange)
 	assert.Equal(t, uint32(2), EventTriggerRATChange)
-	assert.Equal(t, uint32(12), EventTriggerRATTypeChange)
+	assert.Equal(t, uint32(12), EventTriggerRAIChange)
 	assert.Equal(t, uint32(13), EventTriggerUserLocationChange)
 	assert.Equal(t, uint32(33), EventTriggerUsageReport)
 }
@@ -333,7 +333,8 @@ func TestEventTriggerConstants(t *testing.T) {
 func TestIPCANTypeConstants(t *testing.T) {
 	assert.Equal(t, uint32(0), IPCANType3GPP_GPRS)
 	assert.Equal(t, uint32(5), IPCANType3GPP_EPS)
-	assert.Equal(t, uint32(9), IPCANType3GPP_5GS)
+	assert.Equal(t, uint32(8), IPCANType3GPP_5GS) // §5.3.27; the test said 9
+	assert.Equal(t, uint32(9), IPCANTypeNon3GPP_5GS)
 }
 
 func TestHexEncode(t *testing.T) {

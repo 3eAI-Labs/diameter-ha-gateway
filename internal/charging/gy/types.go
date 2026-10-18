@@ -53,12 +53,12 @@ type RoutingInfo struct {
 
 // GyAnswer represents a Credit-Control-Answer for Gy interface
 type GyAnswer struct {
-	ResultCode        uint32 `json:"result_code"`
-	CCRequestType     uint32 `json:"cc_request_type"`
-	CCRequestNumber   uint32 `json:"cc_request_number"`
-	OriginHost        string `json:"origin_host,omitempty"`
-	OriginRealm       string `json:"origin_realm,omitempty"`
-	CCSessionFailover uint32 `json:"cc_session_failover,omitempty"`
+	ResultCode        uint32  `json:"result_code"`
+	CCRequestType     uint32  `json:"cc_request_type"`
+	CCRequestNumber   uint32  `json:"cc_request_number"`
+	OriginHost        string  `json:"origin_host,omitempty"`
+	OriginRealm       string  `json:"origin_realm,omitempty"`
+	CCSessionFailover *uint32 `json:"cc_session_failover,omitempty"` // FAILOVER_NOT_SUPPORTED (0) counts
 
 	// Credit Control
 	MSCC []charging.MSCC `json:"mscc,omitempty"`
@@ -80,8 +80,9 @@ type GyAnswer struct {
 	ErrorReportingHost string               `json:"error_reporting_host,omitempty"`
 
 	// 3GPP Specific
-	LowBalanceIndication uint32            `json:"low_balance_indication,omitempty"`
-	RemainingBalance     *charging.CCMoney `json:"remaining_balance,omitempty"`
+	LowBalanceIndication *uint32                   `json:"low_balance_indication,omitempty"` // NOT-APPLICABLE (0) counts
+	CostInformation      *charging.CostInformation `json:"cost_information,omitempty"`
+	RemainingBalance     *charging.CCMoney         `json:"remaining_balance,omitempty"`
 
 	// Service Information (for reverse path responses)
 	ServiceInformation *charging.ServiceInformation `json:"service_information,omitempty"`

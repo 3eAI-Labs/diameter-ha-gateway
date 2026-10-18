@@ -162,8 +162,9 @@ type ServiceUnit struct {
 	CCInputOctets          uint64   `json:"cc_input_octets,omitempty"`
 	CCOutputOctets         uint64   `json:"cc_output_octets,omitempty"`
 	CCServiceSpecificUnits uint64   `json:"cc_service_specific_units,omitempty"`
-	TariffTimeChange       int64    `json:"tariff_time_change,omitempty"`
-	TariffChangeUsage      uint32   `json:"tariff_change_usage,omitempty"`
+	TariffTimeChange       int64    `json:"tariff_time_change,omitempty"`  // Granted-Service-Unit
+	TariffChangeUsage      *uint32  `json:"tariff_change_usage,omitempty"` // Used-Service-Unit; UNIT_BEFORE_TARIFF_CHANGE (0) counts
+	ReportingReason        *uint32  `json:"reporting_reason,omitempty"`    // Used-Service-Unit (TS 32.299 §7.1.14); THRESHOLD (0) counts
 }
 
 // CCMoney represents monetary values
@@ -187,8 +188,10 @@ type MSCC struct {
 	GrantedServiceUnit    *ServiceUnit           `json:"granted_service_unit,omitempty"`
 	RequestedServiceUnit  *ServiceUnit           `json:"requested_service_unit,omitempty"`
 	UsedServiceUnit       []ServiceUnit          `json:"used_service_unit,omitempty"`
-	ServiceIdentifier     uint32                 `json:"service_identifier,omitempty"`
-	RatingGroup           uint32                 `json:"rating_group"`
+	TariffChangeUsage     *uint32                `json:"tariff_change_usage,omitempty"` // UNIT_BEFORE_TARIFF_CHANGE (0) counts
+	ServiceIdentifier     uint32                 `json:"service_identifier,omitempty"`  // the first of ServiceIdentifiers
+	ServiceIdentifiers    []uint32               `json:"service_identifiers,omitempty"` // *[ Service-Identifier ]
+	RatingGroup           *uint32                `json:"rating_group,omitempty"`        // optional (TS 32.299 §7.1.9, §7.1.10); 0 counts
 	GSUPoolReference      []GSUPoolRef           `json:"gsu_pool_reference,omitempty"`
 	ValidityTime          uint32                 `json:"validity_time,omitempty"`
 	ResultCode            uint32                 `json:"result_code,omitempty"`
@@ -196,15 +199,15 @@ type MSCC struct {
 	TimeQuotaThreshold    uint32                 `json:"time_quota_threshold,omitempty"`
 	VolumeQuotaThreshold  uint32                 `json:"volume_quota_threshold,omitempty"`
 	UnitQuotaThreshold    uint32                 `json:"unit_quota_threshold,omitempty"`
-	QuotaHoldingTime      uint32                 `json:"quota_holding_time,omitempty"`
+	QuotaHoldingTime      *uint32                `json:"quota_holding_time,omitempty"` // 0 disables the mechanism (§7.2.160); absent, the client's default applies
 	QuotaConsumptionTime  uint32                 `json:"quota_consumption_time,omitempty"`
 	ReportingReason       []uint32               `json:"reporting_reason,omitempty"`
-	TriggerType           *TriggerType           `json:"trigger_type,omitempty"`
+	TriggerType           *TriggerType           `json:"trigger_type,omitempty"` // the Trigger AVP; an empty list disarms every trigger (§7.2.235)
 	PSFurnishChargingInfo *PSFurnishChargingInfo `json:"ps_furnish_charging_info,omitempty"`
 	RefundInformation     []byte                 `json:"refund_information,omitempty"`
 	AFCorrelationInfo     []AFCorrelationInfo    `json:"af_correlation_info,omitempty"`
 	Envelope              []Envelope             `json:"envelope,omitempty"`
-	EnvelopeReporting     uint32                 `json:"envelope_reporting,omitempty"`
+	EnvelopeReporting     *uint32                `json:"envelope_reporting,omitempty"` // DO_NOT_REPORT_ENVELOPES (0) counts
 	TimeQuotaMechanism    *TimeQuotaMechanism    `json:"time_quota_mechanism,omitempty"`
 	ServiceSpecificInfo   []ServiceSpecificInfo  `json:"service_specific_info,omitempty"`
 	QoSInformation        *QoSInformation        `json:"qos_information,omitempty"`
@@ -223,6 +226,14 @@ type FinalUnitIndication struct {
 	RestrictionFilterRule [][]byte        `json:"restriction_filter_rule,omitempty"`
 	FilterID              []string        `json:"filter_id,omitempty"`
 	RedirectServer        *RedirectServer `json:"redirect_server,omitempty"`
+}
+
+// CostInformation (RFC 8506 §8.7) is the estimated cost of the requested
+// service.
+type CostInformation struct {
+	UnitValue    *UnitValue `json:"unit_value"`
+	CurrencyCode uint32     `json:"currency_code"`
+	CostUnit     string     `json:"cost_unit,omitempty"`
 }
 
 // RedirectServer specifies redirect target
@@ -424,9 +435,9 @@ type UWANUserLocationInfo struct {
 }
 
 type PSFurnishChargingInfo struct {
-	ThreeGPPChargingID     []byte `json:"3gpp_charging_id,omitempty"`
-	PSFreeFormatData       []byte `json:"ps_free_format_data,omitempty"`
-	PSAppendFreeFormatData uint32 `json:"ps_append_free_format_data,omitempty"`
+	ThreeGPPChargingID     []byte  `json:"3gpp_charging_id,omitempty"`
+	PSFreeFormatData       []byte  `json:"ps_free_format_data,omitempty"`
+	PSAppendFreeFormatData *uint32 `json:"ps_append_free_format_data,omitempty"` // 'Append' (0); absent, the P-GW overwrites (TS 32.299 §7.2.155)
 }
 
 type OfflineCharging struct {

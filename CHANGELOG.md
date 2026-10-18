@@ -9,6 +9,73 @@ describes what changed for an installation of 0.9.4.
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-10-18
+
+Chart 0.3.3 (values and schema unchanged). Gx, Gy and Ro release: Gx follows TS 29.212 Table
+5.3.0.1, and Gy and Ro share one Credit-Control codec that follows TS 32.299 §7.1.9. Applications
+using Gx, Gy or Ro: read *Changed* — several enums are now pointers, so a field set to 0 is sent and
+a field left out is not.
+
+### Fixed
+
+- **Gx follows TS 29.212** (P3-15 of the conformance audit):
+  - Every 3GPP AVP the gateway writes takes its M bit from Table 5.3.0.1; Default-EPS-Bearer-QoS,
+    Usage-Monitoring-Information and its children, Monitoring-Key, Allocation-Retention-Priority,
+    Priority-Level and Pre-emption-Capability/-Vulnerability carried an M bit the table forbids.
+  - Every AVP of the table is in the Gx dictionary with its type: the PCEF's Charging-Rule-Report
+    (CCR and RAA) reached the application empty, and ToS-Traffic-Class decoded as Unsigned32.
+    Reading a CCR no longer assumes an AVP's type.
+  - The RAA's Charging-Rule-Report reaches the application; the reply carried the result only.
+  - APN-AMBR is QoS-Information's APN-Aggregate-Max-Bitrate-UL/DL; the gateway wrote and read
+    AVP 1435, which is S6a's. `apn_ambr` still works, folded into QoS-Information.
+  - Flow-Description is sent inside Flow-Information, with the Flow-Direction §5.3.53 requires
+    (from the description's "in"/"out" when not given); `flow_information` and
+    `redirect_information` of a Charging-Rule-Definition are sent; they were ignored.
+  - Online and Offline are sent only when given; they were always sent, as 0 when absent.
+  - A CCR's second AN-GW-Address reaches the application (`an_gw_addresses`).
+  - A CCA can carry an Experimental-Result (`experimental_result_code`, e.g. 5140) without
+    Result-Code, and a Session-Release-Cause (§4.5.9).
+  - `IPCANType3GPP_5GS` is 8 (3GPP-5GS); 9 is Non-3GPP-5GS. `EventTriggerRATTypeChange` is
+    `EventTriggerRAIChange` (RAI_CHANGE, 12); `EventTriggerDefaultEPSBearerQoSMod` is
+    `EventTriggerDefaultEPSBearerQoSModificationFailure` (34).
+
+- **Gy and Ro share one Credit-Control codec** (P3-16), so Ro sends what Gy sends. In the CCR,
+  every Service-Identifier of an MSCC, the Used-Service-Unit's Reporting-Reason and
+  Tariff-Change-Usage, the Trigger, Envelope, Refund-Information and the other MSCC fields of TS
+  32.299 §7.1.9 reach the application; in the CCA, the MSCC carries every field the application
+  gives — Ro wrote only Rating-Group, Service-Identifier, Granted-Service-Unit, Result-Code,
+  Validity-Time and a Final-Unit-Action without its Redirect-Server.
+  - Rating-Group is optional and is no longer sent as 0 when the application gives none.
+  - Quota-Holding-Time 0 (the mechanism disabled, §7.2.160) and an empty Trigger (every trigger
+    disarmed, §7.2.235) can be sent.
+  - A CCA carries one Failed-AVP holding every failed AVP, with its flags; it carried one per AVP,
+    without flags.
+  - CC-Session-Failover, Cost-Information and Remaining-Balance are sent, and Low-Balance-Indication
+    NOT-APPLICABLE (0); Gy's Redirect-Host is sent. All were accepted and dropped.
+  - Reading a CCR no longer assumes an AVP's type; an empty Requested-Service-Unit reads as
+    present.
+  - PS-Furnish-Charging-Information is sent only with its mandatory 3GPP-Charging-Id (V bit
+    only, TS 29.061), and PS-Append-Free-Format-Data only when given: absent means 'Overwrite',
+    0 'Append' (§7.2.155).
+- README: no OCS-initiated Gy or Ro request (RAR, ASR) is implemented.
+
+### Changed
+
+- **Gx envelopes** (not yet a published contract): enums whose 0 is a value are pointers, so 0 can
+  be sent and absent is told apart — in the CCR event `ip_can_type`, `rat_type`,
+  `bearer_operation`, `an_gw_status`, `network_request_support`; in the PCRF's replies and requests
+  `flow_status`, `reporting_level`, `online`, `offline`, `metering_method`,
+  `usage_monitoring_level`/`_report`/`_support`, `pre_emption_capability`/`_vulnerability`,
+  `flow_direction`, `redirect_support`, `redirect_address_type`, `session_release_cause`; and
+  `pcc_rule_status`. In JSON only absence changes meaning: a field set to 0 is now sent, and a
+  field left out is not, so the specification's default applies (Pre-emption-Capability DISABLED,
+  Redirect-Support ENABLED).
+- **Gy and Ro envelopes** (not yet a published contract): in an MSCC `rating_group`,
+  `quota_holding_time`, `envelope_reporting` and `tariff_change_usage` are pointers, and the
+  service units' `tariff_change_usage` and `reporting_reason`; `service_identifiers` lists every
+  Service-Identifier (`service_identifier` keeps the first); the CCA's `cc_session_failover` and
+  `low_balance_indication` are pointers, and `ps_append_free_format_data`; `cost_information` is new.
+
 ## [0.13.0] — 2026-10-18
 
 Chart 0.3.2 (values and schema unchanged). S6a release, with client module 0.2.0: the rest of
@@ -323,7 +390,8 @@ No change to the gateway's behaviour, configuration or NATS contract.
 See the [README](README.md#known-limitations). New in this release: gateway-initiated requests
 reach directly connected peers only, a consequence of binding identities to connections.
 
-[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.3...v0.11.0

@@ -4,34 +4,48 @@
 package gx
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/fiorix/go-diameter/v4/diam/dict"
 )
 
-// gxDictXML registers the Gx AVPs the translator reads from a CCR and
-// go-diameter v4's Gx dictionary lacks. Undefined, they decoded as Unknown and
-// the translator's type assertion panicked, which closed the PCEF's
-// connection. Code, type and flags are those of TS 29.212 V17.3.0
-// Table 5.3.0.1.
-const gxDictXML = `<?xml version="1.0" encoding="UTF-8"?>
+// gxDictXML registers every AVP of TS 29.212 Table 5.3.0.1 under the Gx
+// application, with the code, type and M bit of spec29212. go-diameter v4's
+// Gx dictionary lacks many of them, so they decoded as Unknown: the CCR
+// handler panicked on some (Bearer-Operation, AN-GW-Status,
+// PDN-Connection-ID) and Charging-Rule-Report was always empty; it gives
+// others the wrong type (ToS-Traffic-Class as Unsigned32). A later Load of
+// an AVP code replaces the earlier definition for the application.
+func gxDictXML() string {
+	names := make([]string, 0, len(spec29212))
+	for name := range spec29212 {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
 <diameter>
     <application id="16777238" type="auth" name="Gx Charging Control">
         <vendor id="10415" name="TGPP"/>
-        <avp name="Bearer-Operation" code="1021" must="M,V" may="P" may-encrypt="Y" vendor-id="10415">
-            <data type="Enumerated"/>
-        </avp>
-        <avp name="PDN-Connection-ID" code="1065" must="V" may="P" may-encrypt="Y" vendor-id="10415">
-            <data type="OctetString"/>
-        </avp>
-        <avp name="AN-GW-Status" code="2811" must="V" may="P" must-not="M" may-encrypt="Y" vendor-id="10415">
-            <data type="Enumerated"/>
-        </avp>
-    </application>
-</diameter>`
+`)
+	for _, name := range names {
+		a := spec29212[name]
+		must, mustNot := "V", "M"
+		if a.MustM {
+			must, mustNot = "M,V", ""
+		}
+		fmt.Fprintf(&b, "        <avp name=%q code=\"%d\" must=%q may=\"P\" must-not=%q may-encrypt=\"Y\" vendor-id=\"10415\"><data type=%q/></avp>\n",
+			name, a.Code, must, mustNot, a.Type)
+	}
+	b.WriteString("    </application>\n</diameter>\n")
+	return b.String()
+}
 
 func init() {
-	if err := dict.Default.Load(strings.NewReader(gxDictXML)); err != nil {
+	if err := dict.Default.Load(strings.NewReader(gxDictXML())); err != nil {
 		panic("gx: dictionary extension: " + err.Error())
 	}
 }

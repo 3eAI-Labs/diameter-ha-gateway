@@ -26,7 +26,7 @@ const (
 	ReAuthTypeAuthorizeAuthenticate uint32 = 1
 )
 
-// Abort-Cause values (TS 29.212 §5.3.1, AVP code 500). Drives the PCEF's
+// Abort-Cause values (TS 29.214 §5.3.1, AVP code 500). Drives the PCEF's
 // disposition of in-flight bearers when the session is aborted.
 const (
 	AbortCauseBearerReleased       uint32 = 0 // PCRF releases the bearer (admin)
@@ -54,24 +54,25 @@ type GxEvent struct {
 	UserEquipmentInfo *charging.UserEquipmentInfo `json:"user_equipment_info,omitempty"`
 
 	// Network Location
-	NetworkRequestSupport uint32 `json:"network_request_support,omitempty"`
-	IPCANType             uint32 `json:"ip_can_type,omitempty"`
-	RATType               uint32 `json:"rat_type,omitempty"`
-	ANGWAddress           []byte `json:"an_gw_address,omitempty"`
-	ANGWStatus            uint32 `json:"an_gw_status,omitempty"`
+	NetworkRequestSupport *uint32  `json:"network_request_support,omitempty"`
+	IPCANType             *uint32  `json:"ip_can_type,omitempty"`
+	RATType               *uint32  `json:"rat_type,omitempty"`
+	ANGWAddress           []byte   `json:"an_gw_address,omitempty"`   // the first AN-GW-Address
+	ANGWAddresses         [][]byte `json:"an_gw_addresses,omitempty"` // every AN-GW-Address (0*2, TS 29.212 §5.6.2)
+	ANGWStatus            *uint32  `json:"an_gw_status,omitempty"`
 
 	// Framed IP
 	FramedIPAddress  []byte `json:"framed_ip_address,omitempty"`
 	FramedIPv6Prefix []byte `json:"framed_ipv6_prefix,omitempty"`
 
 	// 3GPP Specific
-	ThreeGPPSGSNMCCMNC       string `json:"3gpp_sgsn_mcc_mnc,omitempty"`
-	ThreeGPPUserLocationInfo []byte `json:"3gpp_user_location_info,omitempty"`
-	ThreeGPPMSTimeZone       []byte `json:"3gpp_ms_timezone,omitempty"`
-	CalledStationID          string `json:"called_station_id,omitempty"`
-	PDNConnectionID          []byte `json:"pdn_connection_id,omitempty"`
-	BearerIdentifier         []byte `json:"bearer_identifier,omitempty"`
-	BearerOperation          uint32 `json:"bearer_operation,omitempty"`
+	ThreeGPPSGSNMCCMNC       string  `json:"3gpp_sgsn_mcc_mnc,omitempty"`
+	ThreeGPPUserLocationInfo []byte  `json:"3gpp_user_location_info,omitempty"`
+	ThreeGPPMSTimeZone       []byte  `json:"3gpp_ms_timezone,omitempty"`
+	CalledStationID          string  `json:"called_station_id,omitempty"`
+	PDNConnectionID          []byte  `json:"pdn_connection_id,omitempty"`
+	BearerIdentifier         []byte  `json:"bearer_identifier,omitempty"`
+	BearerOperation          *uint32 `json:"bearer_operation,omitempty"`
 
 	// QoS
 	QoSInformation      *QoSInformation      `json:"qos_information,omitempty"`
@@ -93,11 +94,18 @@ type GxEvent struct {
 
 // GxAnswer represents a Credit-Control-Answer for Gx interface
 type GxAnswer struct {
-	ResultCode      uint32 `json:"result_code"`
-	CCRequestType   uint32 `json:"cc_request_type"`
-	CCRequestNumber uint32 `json:"cc_request_number"`
-	OriginHost      string `json:"origin_host,omitempty"`
-	OriginRealm     string `json:"origin_realm,omitempty"`
+	ResultCode uint32 `json:"result_code"`
+	// ExperimentalResultCode is a 3GPP result (TS 29.212 §5.5, e.g. 5140
+	// DIAMETER_ERROR_INITIAL_PARAMETERS); set, the CCA carries it in
+	// Experimental-Result and no Result-Code.
+	ExperimentalResultCode uint32 `json:"experimental_result_code,omitempty"`
+	// SessionReleaseCause (1045, §5.3.44) asks the PCEF to end the IP-CAN
+	// session (§4.5.9 sends it in a CCA); UNSPECIFIED_REASON (0) counts.
+	SessionReleaseCause *uint32 `json:"session_release_cause,omitempty"`
+	CCRequestType       uint32  `json:"cc_request_type"`
+	CCRequestNumber     uint32  `json:"cc_request_number"`
+	OriginHost          string  `json:"origin_host,omitempty"`
+	OriginRealm         string  `json:"origin_realm,omitempty"`
 
 	// Charging Rules
 	ChargingRuleInstall []ChargingRuleInstall `json:"charging_rule_install,omitempty"`
@@ -147,7 +155,7 @@ type GxReAuthRequest struct {
 
 	// Session Release (optional — when set, asks PCEF to tear down the
 	// session after applying any rules in this RAR).
-	SessionReleaseCause uint32 `json:"session_release_cause,omitempty"`
+	SessionReleaseCause *uint32 `json:"session_release_cause,omitempty"` // UNSPECIFIED_REASON (0) counts
 }
 
 // GxReAuthAnswer is the NATS reply envelope for an RAR exchange. ResultCode
@@ -167,8 +175,8 @@ type GxReAuthAnswer struct {
 }
 
 // GxAbortSessionRequest is the NATS event body for diameter.gx.asr — PCRF
-// backend requests the gateway to push an ASR (RFC 4006 §3.2.5 + TS 29.212
-// §4.5.5) to the PCEF holding the session.
+// backend requests the gateway to push an ASR (RFC 6733 §8.5.1; TS 29.212
+// defines none, see README) to the PCEF holding the session.
 //
 // Header.SessionID is REQUIRED — ASR carries no User-Name in Gx; routing is
 // purely Session-Id based. AbortCause defaults to 0 (BEARER_RELEASED) when
@@ -203,19 +211,30 @@ type QoSInformation struct {
 	GuaranteedBitrateDL         uint32                       `json:"guaranteed_bitrate_dl,omitempty"`
 	BearerIdentifier            []byte                       `json:"bearer_identifier,omitempty"`
 	AllocationRetentionPriority *AllocationRetentionPriority `json:"allocation_retention_priority,omitempty"`
+	// APN-Aggregate-Max-Bitrate-UL/DL (1041, 1040), the APN-AMBR of
+	// TS 29.212 (§5.3.39, §5.3.40).
+	APNAggregateMaxBitrateUL uint32 `json:"apn_aggregate_max_bitrate_ul,omitempty"`
+	APNAggregateMaxBitrateDL uint32 `json:"apn_aggregate_max_bitrate_dl,omitempty"`
 }
 
 // AllocationRetentionPriority contains ARP information
 type AllocationRetentionPriority struct {
-	PriorityLevel           uint32 `json:"priority_level"`
-	PreEmptionCapability    uint32 `json:"pre_emption_capability,omitempty"`
-	PreEmptionVulnerability uint32 `json:"pre_emption_vulnerability,omitempty"`
+	PriorityLevel uint32 `json:"priority_level"`
+	// Absent, the AVP is not sent and its default applies:
+	// PRE-EMPTION_CAPABILITY_DISABLED (1), PRE-EMPTION_VULNERABILITY_ENABLED
+	// (0) (TS 29.212 §5.3.46, §5.3.47).
+	PreEmptionCapability    *uint32 `json:"pre_emption_capability,omitempty"`
+	PreEmptionVulnerability *uint32 `json:"pre_emption_vulnerability,omitempty"`
 }
 
 // DefaultEPSBearerQoS contains default bearer QoS
 type DefaultEPSBearerQoS struct {
 	QoSClassIdentifier          uint32                       `json:"qos_class_identifier"`
 	AllocationRetentionPriority *AllocationRetentionPriority `json:"allocation_retention_priority,omitempty"`
+	// APN-Aggregate-Max-Bitrate-UL/DL (1041, 1040), the APN-AMBR of
+	// TS 29.212 (§5.3.39, §5.3.40).
+	APNAggregateMaxBitrateUL uint32 `json:"apn_aggregate_max_bitrate_ul,omitempty"`
+	APNAggregateMaxBitrateDL uint32 `json:"apn_aggregate_max_bitrate_dl,omitempty"`
 }
 
 // APNAMBR contains APN Aggregate Maximum Bit Rate
@@ -251,12 +270,12 @@ type ChargingRule struct {
 	RatingGroup         uint32          `json:"rating_group,omitempty"`
 	FlowDescription     []string        `json:"flow_description,omitempty"`
 	FlowInformation     []FlowInfo      `json:"flow_information,omitempty"`
-	FlowStatus          uint32          `json:"flow_status,omitempty"`
+	FlowStatus          *uint32         `json:"flow_status,omitempty"` // ENABLED-UPLINK (0) counts
 	QoSInformation      *QoSInformation `json:"qos_information,omitempty"`
-	ReportingLevel      uint32          `json:"reporting_level,omitempty"`
-	Online              uint32          `json:"online,omitempty"`
-	Offline             uint32          `json:"offline,omitempty"`
-	MeteringMethod      uint32          `json:"metering_method,omitempty"`
+	ReportingLevel      *uint32         `json:"reporting_level,omitempty"` // SERVICE_IDENTIFIER_LEVEL (0) counts
+	Online              *uint32         `json:"online,omitempty"`          // DISABLE_ONLINE (0) counts
+	Offline             *uint32         `json:"offline,omitempty"`         // DISABLE_OFFLINE (0) counts
+	MeteringMethod      *uint32         `json:"metering_method,omitempty"` // DURATION (0) counts
 	Precedence          uint32          `json:"precedence,omitempty"`
 	MonitoringKey       []byte          `json:"monitoring_key,omitempty"`
 	RedirectInformation *RedirectInfo   `json:"redirect_information,omitempty"`
@@ -265,14 +284,20 @@ type ChargingRule struct {
 // FlowInfo contains flow information
 type FlowInfo struct {
 	FlowDescription string `json:"flow_description,omitempty"`
-	FlowDirection   uint32 `json:"flow_direction,omitempty"`
+	// FlowDirection (§5.3.65): DOWNLINK (1), UPLINK (2), BIDIRECTIONAL (3).
+	// Absent, it follows the description's direction, "out" downlink and
+	// "in" uplink (§5.3.53); Flow-Information requires it with a
+	// Flow-Description.
+	FlowDirection *uint32 `json:"flow_direction,omitempty"`
 }
 
 // RedirectInfo contains redirect information
 type RedirectInfo struct {
-	RedirectSupport       uint32 `json:"redirect_support,omitempty"`
-	RedirectAddressType   uint32 `json:"redirect_address_type,omitempty"`
-	RedirectServerAddress string `json:"redirect_server_address,omitempty"`
+	// RedirectSupport absent leaves REDIRECTION_ENABLED (1), the default
+	// (§5.3.83); RedirectAddressType is sent with the address only.
+	RedirectSupport       *uint32 `json:"redirect_support,omitempty"`
+	RedirectAddressType   *uint32 `json:"redirect_address_type,omitempty"`
+	RedirectServerAddress string  `json:"redirect_server_address,omitempty"`
 }
 
 // ChargingRuleReport reports rule status
@@ -280,7 +305,7 @@ type ChargingRuleReport struct {
 	ChargingRuleName     []string `json:"charging_rule_name,omitempty"`
 	ChargingRuleBaseName []string `json:"charging_rule_base_name,omitempty"`
 	BearerIdentifier     []byte   `json:"bearer_identifier,omitempty"`
-	PCCRuleStatus        uint32   `json:"pcc_rule_status,omitempty"`
+	PCCRuleStatus        *uint32  `json:"pcc_rule_status,omitempty"` // ACTIVE (0) counts
 	RuleFailureCode      uint32   `json:"rule_failure_code,omitempty"`
 }
 
@@ -293,9 +318,9 @@ type UsageMonitoringInfo struct {
 	MonitoringKey          []byte                `json:"monitoring_key,omitempty"`
 	GrantedServiceUnit     *charging.ServiceUnit `json:"granted_service_unit,omitempty"`
 	UsedServiceUnit        *charging.ServiceUnit `json:"used_service_unit,omitempty"`
-	UsageMonitoringLevel   uint32                `json:"usage_monitoring_level,omitempty"`
-	UsageMonitoringReport  uint32                `json:"usage_monitoring_report,omitempty"`
-	UsageMonitoringSupport uint32                `json:"usage_monitoring_support,omitempty"`
+	UsageMonitoringLevel   *uint32               `json:"usage_monitoring_level,omitempty"`   // SESSION_LEVEL (0) counts
+	UsageMonitoringReport  *uint32               `json:"usage_monitoring_report,omitempty"`  // USAGE_MONITORING_REPORT_REQUIRED (0) counts
+	UsageMonitoringSupport *uint32               `json:"usage_monitoring_support,omitempty"` // USAGE_MONITORING_DISABLED (0) counts
 }
 
 // =============================================================================
@@ -303,36 +328,37 @@ type UsageMonitoringInfo struct {
 // =============================================================================
 
 const (
-	EventTriggerSGSNChange                uint32 = 0
-	EventTriggerQoSChange                 uint32 = 1
-	EventTriggerRATChange                 uint32 = 2
-	EventTriggerTFTChange                 uint32 = 3
-	EventTriggerPLMNChange                uint32 = 4
-	EventTriggerLossOfBearer              uint32 = 5
-	EventTriggerRecoveryOfBearer          uint32 = 6
-	EventTriggerIPCANChange               uint32 = 7
-	EventTriggerQoSChangeExceedAuth       uint32 = 11
-	EventTriggerRATTypeChange             uint32 = 12
-	EventTriggerUserLocationChange        uint32 = 13
-	EventTriggerNoEventTriggers           uint32 = 14
-	EventTriggerOutOfCredit               uint32 = 15
-	EventTriggerReallocationOfCredit      uint32 = 16
-	EventTriggerRevalidationTimeout       uint32 = 17
-	EventTriggerUEIPAddressAllocate       uint32 = 18
-	EventTriggerUEIPAddressRelease        uint32 = 19
-	EventTriggerDefaultEPSBearerQoSChange uint32 = 20
-	EventTriggerANGWChange                uint32 = 21
-	EventTriggerSuccessfulResourceAlloc   uint32 = 22
-	EventTriggerResourceModificationReq   uint32 = 23
-	EventTriggerUsageReport               uint32 = 33
-	EventTriggerDefaultEPSBearerQoSMod    uint32 = 34
+	EventTriggerSGSNChange                             uint32 = 0
+	EventTriggerQoSChange                              uint32 = 1
+	EventTriggerRATChange                              uint32 = 2
+	EventTriggerTFTChange                              uint32 = 3
+	EventTriggerPLMNChange                             uint32 = 4
+	EventTriggerLossOfBearer                           uint32 = 5
+	EventTriggerRecoveryOfBearer                       uint32 = 6
+	EventTriggerIPCANChange                            uint32 = 7
+	EventTriggerQoSChangeExceedAuth                    uint32 = 11
+	EventTriggerRAIChange                              uint32 = 12
+	EventTriggerUserLocationChange                     uint32 = 13
+	EventTriggerNoEventTriggers                        uint32 = 14
+	EventTriggerOutOfCredit                            uint32 = 15
+	EventTriggerReallocationOfCredit                   uint32 = 16
+	EventTriggerRevalidationTimeout                    uint32 = 17
+	EventTriggerUEIPAddressAllocate                    uint32 = 18
+	EventTriggerUEIPAddressRelease                     uint32 = 19
+	EventTriggerDefaultEPSBearerQoSChange              uint32 = 20
+	EventTriggerANGWChange                             uint32 = 21
+	EventTriggerSuccessfulResourceAlloc                uint32 = 22
+	EventTriggerResourceModificationReq                uint32 = 23
+	EventTriggerUsageReport                            uint32 = 33
+	EventTriggerDefaultEPSBearerQoSModificationFailure uint32 = 34
 )
 
 // IP-CAN-Type values
 const (
-	IPCANType3GPP_GPRS uint32 = 0
-	IPCANType3GPP_EPS  uint32 = 5
-	IPCANType3GPP_5GS  uint32 = 9
+	IPCANType3GPP_GPRS   uint32 = 0
+	IPCANType3GPP_EPS    uint32 = 5
+	IPCANType3GPP_5GS    uint32 = 8 // TS 29.212 §5.3.27
+	IPCANTypeNon3GPP_5GS uint32 = 9
 )
 
 // Bearer-Operation values

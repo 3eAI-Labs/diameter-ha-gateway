@@ -91,23 +91,28 @@ func TestCreateRAR_SessionReleaseCause(t *testing.T) {
 	tr := NewTranslator()
 	req := &GxReAuthRequest{
 		ReAuthRequestType:   ReAuthTypeAuthorizeOnly,
-		SessionReleaseCause: 1, // UE_SUBSCRIPTION_REASON
+		SessionReleaseCause: u32p0(1), // UE_SUBSCRIPTION_REASON
 	}
 	m := tr.CreateRAR("s", "p", "pr", "g", "gr", req)
 	a := findRawAVP(t, m, 1045, vendorID3GPP)
 	assert.Equal(t, datatype.Enumerated(1), a.Data)
 }
 
-func TestCreateRAR_SessionReleaseCauseOmittedWhenZero(t *testing.T) {
+func TestCreateRAR_SessionReleaseCauseOmittedWhenAbsent(t *testing.T) {
 	tr := NewTranslator()
 	req := &GxReAuthRequest{ReAuthRequestType: ReAuthTypeAuthorizeOnly}
 	m := tr.CreateRAR("s", "p", "pr", "g", "gr", req)
 	for _, a := range m.AVP {
 		if a.Code == 1045 {
-			t.Fatal("Session-Release-Cause AVP must be omitted when zero")
+			t.Fatal("Session-Release-Cause AVP must be omitted when absent")
 		}
 	}
+	// UNSPECIFIED_REASON (0) is a cause (TS 29.212 §5.3.44) and is sent.
+	req.SessionReleaseCause = u32p0(0)
+	assert.Equal(t, datatype.Enumerated(0), findRawAVP(t, tr.CreateRAR("s", "p", "pr", "g", "gr", req), 1045, vendorID3GPP).Data)
 }
+
+func u32p0(v uint32) *uint32 { return &v }
 
 // ─── ASR ───────────────────────────────────────────────────────────────────
 

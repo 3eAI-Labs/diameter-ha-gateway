@@ -34,7 +34,8 @@ func TestToCCREvent_FromWire(t *testing.T) {
 
 	event, err := NewTranslator().ToCCREvent(m, "gx-wire")
 	require.NoError(t, err)
-	assert.Equal(t, BearerOperationModification, event.BearerOperation)
-	assert.Equal(t, uint32(0), event.ANGWStatus)
+	require.NotNil(t, event.BearerOperation)
+	assert.Equal(t, BearerOperationModification, *event.BearerOperation)
+	assert.Equal(t, u(0), event.ANGWStatus, "AN_GW_FAILED (0) is present")
 	assert.Equal(t, []byte{0x01, 0x02, 0x03}, event.PDNConnectionID, "OctetString, TS 29.212 §5.3.58")
 }

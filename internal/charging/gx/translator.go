@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/3eAI-Labs/diameter-ha-gateway/internal/charging"
@@ -63,7 +64,6 @@ const (
 	avpPreEmptionCapability        = 1047 // 3GPP
 	avpPreEmptionVulnerability     = 1048 // 3GPP
 	avpDefaultEPSBearerQoS         = 1049 // 3GPP
-	avpAPNAMBR                     = 1435 // 3GPP
 	avpAPNAggregateMaxBitrateUL    = 1041 // 3GPP
 	avpAPNAggregateMaxBitrateDL    = 1040 // 3GPP
 
@@ -94,20 +94,24 @@ const (
 	avpRuleFailureCode        = 1031 // 3GPP
 
 	// Rule Definition AVPs
-	avpServiceIdentifier    = 439
-	avpRatingGroup          = 432
-	avpFlowDescription      = 507  // 3GPP
-	avpFlowInformation      = 1058 // 3GPP
-	avpFlowStatus           = 511  // 3GPP
-	avpReportingLevel       = 1011 // 3GPP
-	avpOnline               = 1009 // 3GPP
-	avpOffline              = 1008 // 3GPP
-	avpMeteringMethod       = 1007 // 3GPP
-	avpPrecedence           = 1010 // 3GPP
-	avpRedirectInformation  = 1085 // 3GPP
-	avpRedirectSupport      = 1086 // 3GPP
-	avpRuleActivationTime   = 1043 // 3GPP
-	avpRuleDeactivationTime = 1044 // 3GPP
+	avpServiceIdentifier     = 439
+	avpRatingGroup           = 432
+	avpFlowDescription       = 507  // 3GPP
+	avpFlowInformation       = 1058 // 3GPP
+	avpFlowStatus            = 511  // 3GPP
+	avpReportingLevel        = 1011 // 3GPP
+	avpOnline                = 1009 // 3GPP
+	avpOffline               = 1008 // 3GPP
+	avpMeteringMethod        = 1007 // 3GPP
+	avpPrecedence            = 1010 // 3GPP
+	avpRedirectInformation   = 1085 // 3GPP
+	avpRedirectSupport       = 1086 // 3GPP
+	avpFlowDirection         = 1080 // 3GPP
+	avpSessionReleaseCause   = 1045 // 3GPP
+	avpRedirectAddressType   = 433  // RFC 8506
+	avpRedirectServerAddress = 435  // RFC 8506
+	avpRuleActivationTime    = 1043 // 3GPP
+	avpRuleDeactivationTime  = 1044 // 3GPP
 
 	// Revalidation
 	avpRevalidationTime = 1042 // 3GPP
@@ -132,13 +136,13 @@ func (t *Translator) ToCCREvent(m *diam.Message, traceID string) (*GxEvent, erro
 
 	// Credit Control AVPs
 	if a := t.findAVP(m, avpCCRequestType, 0); a != nil {
-		event.CCRequestType = uint32(a.Data.(datatype.Enumerated))
+		event.CCRequestType = u32(a)
 	}
 	if a := t.findAVP(m, avpCCRequestNumber, 0); a != nil {
-		event.CCRequestNumber = uint32(a.Data.(datatype.Unsigned32))
+		event.CCRequestNumber = u32(a)
 	}
 	if a := t.findAVP(m, avpOriginStateID, 0); a != nil {
-		event.OriginStateID = uint32(a.Data.(datatype.Unsigned32))
+		event.OriginStateID = u32(a)
 	}
 
 	// Subscription IDs
@@ -151,19 +155,24 @@ func (t *Translator) ToCCREvent(m *diam.Message, traceID string) (*GxEvent, erro
 
 	// Network Location (3GPP)
 	if a := t.findAVP(m, avpNetworkRequestSupport, vendorID3GPP); a != nil {
-		event.NetworkRequestSupport = uint32(a.Data.(datatype.Enumerated))
+		event.NetworkRequestSupport = u32p(a)
 	}
 	if a := t.findAVP(m, avpIPCANType, vendorID3GPP); a != nil {
-		event.IPCANType = uint32(a.Data.(datatype.Enumerated))
+		event.IPCANType = u32p(a)
 	}
 	if a := t.findAVP(m, avpRATType, vendorID3GPP); a != nil {
-		event.RATType = uint32(a.Data.(datatype.Enumerated))
+		event.RATType = u32p(a)
 	}
-	if a := t.findAVP(m, avpANGWAddress, vendorID3GPP); a != nil {
-		event.ANGWAddress = a.Data.Serialize()
+	for _, a := range m.AVP {
+		if a.Code == avpANGWAddress && a.VendorID == vendorID3GPP {
+			event.ANGWAddresses = append(event.ANGWAddresses, a.Data.Serialize())
+		}
+	}
+	if len(event.ANGWAddresses) > 0 {
+		event.ANGWAddress = event.ANGWAddresses[0]
 	}
 	if a := t.findAVP(m, avpANGWStatus, vendorID3GPP); a != nil {
-		event.ANGWStatus = uint32(a.Data.(datatype.Enumerated))
+		event.ANGWStatus = u32p(a)
 	}
 
 	// Framed IP
@@ -194,7 +203,7 @@ func (t *Translator) ToCCREvent(m *diam.Message, traceID string) (*GxEvent, erro
 		event.BearerIdentifier = a.Data.Serialize()
 	}
 	if a := t.findAVP(m, avpBearerOperation, vendorID3GPP); a != nil {
-		event.BearerOperation = uint32(a.Data.(datatype.Enumerated))
+		event.BearerOperation = u32p(a)
 	}
 
 	// QoS Information
@@ -204,8 +213,11 @@ func (t *Translator) ToCCREvent(m *diam.Message, traceID string) (*GxEvent, erro
 	if a := t.findAVP(m, avpDefaultEPSBearerQoS, vendorID3GPP); a != nil {
 		event.DefaultEPSBearerQoS = t.parseDefaultEPSBearerQoS(a)
 	}
-	if a := t.findAVP(m, avpAPNAMBR, vendorID3GPP); a != nil {
-		event.APNAMBR = t.parseAPNAMBR(a)
+	// APN-AMBR is QoS-Information's APN-Aggregate-Max-Bitrate-UL/DL (TS
+	// 29.212 §5.3.16); apn_ambr repeats it for applications of earlier
+	// releases.
+	if q := event.QoSInformation; q != nil && (q.APNAggregateMaxBitrateUL != 0 || q.APNAggregateMaxBitrateDL != 0) {
+		event.APNAMBR = &APNAMBR{APNAggregateMaxBitrateUL: q.APNAggregateMaxBitrateUL, APNAggregateMaxBitrateDL: q.APNAggregateMaxBitrateDL}
 	}
 
 	// Event Triggers
@@ -219,7 +231,7 @@ func (t *Translator) ToCCREvent(m *diam.Message, traceID string) (*GxEvent, erro
 
 	// Termination
 	if a := t.findAVP(m, avpTerminationCause, 0); a != nil {
-		event.TerminationCause = uint32(a.Data.(datatype.Enumerated))
+		event.TerminationCause = u32(a)
 	}
 
 	return event, nil
@@ -228,6 +240,14 @@ func (t *Translator) ToCCREvent(m *diam.Message, traceID string) (*GxEvent, erro
 // ToCCAMessage converts a GxAnswer to a Diameter CCA message
 func (t *Translator) ToCCAMessage(answer *GxAnswer, req *diam.Message) (*diam.Message, error) {
 	ans := req.Answer(answer.ResultCode)
+	if answer.ExperimentalResultCode != 0 {
+		// A 3GPP result travels in Experimental-Result, without Result-Code.
+		ans = req.Answer(0)
+		ans.AddAVP(diam.NewAVP(avp.ExperimentalResult, avp.Mbit, 0, &diam.GroupedAVP{AVP: []*diam.AVP{
+			diam.NewAVP(avp.VendorID, avp.Mbit, 0, datatype.Unsigned32(vendorID3GPP)),
+			diam.NewAVP(avp.ExperimentalResultCode, avp.Mbit, 0, datatype.Unsigned32(answer.ExperimentalResultCode)),
+		}}))
+	}
 
 	// CC-Request-Type and Number
 	ans.NewAVP(avpCCRequestType, avp.Mbit, 0, datatype.Enumerated(answer.CCRequestType))
@@ -243,42 +263,42 @@ func (t *Translator) ToCCAMessage(answer *GxAnswer, req *diam.Message) (*diam.Me
 
 	// Charging Rule Install
 	for _, cri := range answer.ChargingRuleInstall {
-		ans.NewAVP(avpChargingRuleInstall, avp.Mbit|avp.Vbit, vendorID3GPP, t.buildChargingRuleInstall(&cri))
+		ans.AddAVP(avpGx(avpChargingRuleInstall, t.buildChargingRuleInstall(&cri)))
 	}
 
 	// Charging Rule Remove
 	for _, crr := range answer.ChargingRuleRemove {
-		ans.NewAVP(avpChargingRuleRemove, avp.Mbit|avp.Vbit, vendorID3GPP, t.buildChargingRuleRemove(&crr))
+		ans.AddAVP(avpGx(avpChargingRuleRemove, t.buildChargingRuleRemove(&crr)))
 	}
 
-	// QoS Information
-	if answer.QoSInformation != nil {
-		ans.NewAVP(avpQoSInformation, avp.Mbit|avp.Vbit, vendorID3GPP, t.buildQoSInformation(answer.QoSInformation))
+	// QoS Information, with apn_ambr folded in: TS 29.212 has no APN-AMBR
+	// AVP, only QoS-Information's APN-Aggregate-Max-Bitrate-UL/DL.
+	if qos := withAPNAMBR(answer.QoSInformation, answer.APNAMBR); qos != nil {
+		ans.AddAVP(avpGx(avpQoSInformation, t.buildQoSInformation(qos)))
 	}
 
 	// Default EPS Bearer QoS
 	if answer.DefaultEPSBearerQoS != nil {
-		ans.NewAVP(avpDefaultEPSBearerQoS, avp.Mbit|avp.Vbit, vendorID3GPP, t.buildDefaultEPSBearerQoS(answer.DefaultEPSBearerQoS))
-	}
-
-	// APN-AMBR
-	if answer.APNAMBR != nil {
-		ans.NewAVP(avpAPNAMBR, avp.Mbit|avp.Vbit, vendorID3GPP, t.buildAPNAMBR(answer.APNAMBR))
+		ans.AddAVP(avpGx(avpDefaultEPSBearerQoS, t.buildDefaultEPSBearerQoS(answer.DefaultEPSBearerQoS)))
 	}
 
 	// Event Triggers
 	for _, et := range answer.EventTrigger {
-		ans.NewAVP(avpEventTrigger, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Enumerated(et))
+		ans.AddAVP(avpGx(avpEventTrigger, datatype.Enumerated(et)))
 	}
 
 	// Revalidation Time
 	if answer.RevalidationTime > 0 {
-		ans.NewAVP(avpRevalidationTime, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Time(time.Unix(answer.RevalidationTime, 0)))
+		ans.AddAVP(avpGx(avpRevalidationTime, datatype.Time(time.Unix(answer.RevalidationTime, 0))))
+	}
+
+	if answer.SessionReleaseCause != nil {
+		ans.AddAVP(avpGx(avpSessionReleaseCause, datatype.Enumerated(*answer.SessionReleaseCause)))
 	}
 
 	// Usage Monitoring Information
 	for _, umi := range answer.UsageMonitoringInformation {
-		ans.NewAVP(avpUsageMonitoringInformation, avp.Mbit|avp.Vbit, vendorID3GPP, t.buildUsageMonitoringInfo(&umi))
+		ans.AddAVP(avpGx(avpUsageMonitoringInformation, t.buildUsageMonitoringInfo(&umi)))
 	}
 
 	// Failed AVP
@@ -314,33 +334,33 @@ func (t *Translator) CreateRAR(sessionID, destHost, destRealm, originHost, origi
 	m.NewAVP(285, avp.Mbit, 0, datatype.Enumerated(req.ReAuthRequestType))
 
 	for _, cri := range req.ChargingRuleInstall {
-		m.NewAVP(avpChargingRuleInstall, avp.Mbit|avp.Vbit, vendorID3GPP, t.buildChargingRuleInstall(&cri))
+		m.AddAVP(avpGx(avpChargingRuleInstall, t.buildChargingRuleInstall(&cri)))
 	}
 	for _, crr := range req.ChargingRuleRemove {
-		m.NewAVP(avpChargingRuleRemove, avp.Mbit|avp.Vbit, vendorID3GPP, t.buildChargingRuleRemove(&crr))
+		m.AddAVP(avpGx(avpChargingRuleRemove, t.buildChargingRuleRemove(&crr)))
 	}
 	if req.QoSInformation != nil {
-		m.NewAVP(avpQoSInformation, avp.Mbit|avp.Vbit, vendorID3GPP, t.buildQoSInformation(req.QoSInformation))
+		m.AddAVP(avpGx(avpQoSInformation, t.buildQoSInformation(req.QoSInformation)))
 	}
 	if req.DefaultEPSBearerQoS != nil {
-		m.NewAVP(avpDefaultEPSBearerQoS, avp.Mbit|avp.Vbit, vendorID3GPP, t.buildDefaultEPSBearerQoS(req.DefaultEPSBearerQoS))
+		m.AddAVP(avpGx(avpDefaultEPSBearerQoS, t.buildDefaultEPSBearerQoS(req.DefaultEPSBearerQoS)))
 	}
 	for _, et := range req.EventTrigger {
-		m.NewAVP(avpEventTrigger, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Enumerated(et))
+		m.AddAVP(avpGx(avpEventTrigger, datatype.Enumerated(et)))
 	}
-	if req.SessionReleaseCause > 0 {
+	if req.SessionReleaseCause != nil {
 		// Session-Release-Cause AVP code 1045 (TS 29.212 §5.3.46).
-		m.NewAVP(1045, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Enumerated(req.SessionReleaseCause))
+		m.AddAVP(avpGx(avpSessionReleaseCause, datatype.Enumerated(*req.SessionReleaseCause)))
 	}
 
 	return m
 }
 
-// CreateASR builds an Abort-Session-Request (RFC 4006 §3.2.5 + TS 29.212
-// §4.5.5) for PCRF→PCEF reverse direction. Like RAR, sessionID is the
+// CreateASR builds an Abort-Session-Request (RFC 6733 §8.5.1, RFC 4006
+// §3.2.5; TS 29.212 defines none) for PCRF→PCEF reverse direction. Like RAR, sessionID is the
 // original CCR-I session id — ASR rides the existing PCEF session.
 //
-// Per TS 29.212 §5.3.1, Abort-Cause (AVP 500) is OPTIONAL but operationally
+// Per TS 29.214 §5.3.1, Abort-Cause (AVP 500) is OPTIONAL but operationally
 // recommended so the PCEF can disambiguate teardown intent in CDRs. Pass
 // AbortCauseBearerReleased (0) when in doubt.
 func (t *Translator) CreateASR(sessionID, destHost, destRealm, originHost, originRealm string,
@@ -354,9 +374,9 @@ func (t *Translator) CreateASR(sessionID, destHost, destRealm, originHost, origi
 	m.NewAVP(avp.DestinationRealm, avp.Mbit, 0, datatype.DiameterIdentity(destRealm))
 	m.NewAVP(avp.DestinationHost, avp.Mbit, 0, datatype.DiameterIdentity(destHost))
 	m.NewAVP(avp.AuthApplicationID, avp.Mbit, 0, datatype.Unsigned32(AppIDGx))
-	// Abort-Cause AVP code 500 (TS 29.212 §5.3.1). Always emit so the PCEF
+	// Abort-Cause AVP code 500 (TS 29.214 §5.3.1). Always emit so the PCEF
 	// sees an explicit cause rather than relying on its default.
-	m.NewAVP(500, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Enumerated(req.AbortCause))
+	m.AddAVP(avpGx(500, datatype.Enumerated(req.AbortCause)))
 	return m
 }
 
@@ -440,7 +460,7 @@ func (t *Translator) parseSubscriptionIDs(m *diam.Message) []charging.Subscripti
 			if g, ok := a.Data.(*diam.GroupedAVP); ok {
 				var sub charging.SubscriptionID
 				if typeAVP := t.findAVPInGrouped(g, avpSubscriptionIDType, 0); typeAVP != nil {
-					sub.Type = uint32(typeAVP.Data.(datatype.Enumerated))
+					sub.Type = u32(typeAVP)
 				}
 				if dataAVP := t.findAVPInGrouped(g, avpSubscriptionIDData, 0); dataAVP != nil {
 					sub.Data = avpString(dataAVP)
@@ -457,7 +477,7 @@ func (t *Translator) parseUserEquipmentInfo(a *diam.AVP) *charging.UserEquipment
 	if g, ok := a.Data.(*diam.GroupedAVP); ok {
 		info := &charging.UserEquipmentInfo{}
 		if typeAVP := t.findAVPInGrouped(g, avpUserEquipmentInfoType, 0); typeAVP != nil {
-			info.Type = uint32(typeAVP.Data.(datatype.Enumerated))
+			info.Type = u32(typeAVP)
 		}
 		if valAVP := t.findAVPInGrouped(g, avpUserEquipmentInfoValue, 0); valAVP != nil {
 			info.Value = valAVP.Data.Serialize()
@@ -471,19 +491,19 @@ func (t *Translator) parseQoSInformation(a *diam.AVP) *QoSInformation {
 	if g, ok := a.Data.(*diam.GroupedAVP); ok {
 		qos := &QoSInformation{}
 		if qci := t.findAVPInGrouped(g, avpQoSClassIdentifier, vendorID3GPP); qci != nil {
-			qos.QoSClassIdentifier = uint32(qci.Data.(datatype.Enumerated))
+			qos.QoSClassIdentifier = u32(qci)
 		}
 		if ul := t.findAVPInGrouped(g, avpMaxRequestedBandwidthUL, vendorID3GPP); ul != nil {
-			qos.MaxRequestedBandwidthUL = uint32(ul.Data.(datatype.Unsigned32))
+			qos.MaxRequestedBandwidthUL = u32(ul)
 		}
 		if dl := t.findAVPInGrouped(g, avpMaxRequestedBandwidthDL, vendorID3GPP); dl != nil {
-			qos.MaxRequestedBandwidthDL = uint32(dl.Data.(datatype.Unsigned32))
+			qos.MaxRequestedBandwidthDL = u32(dl)
 		}
 		if gul := t.findAVPInGrouped(g, avpGuaranteedBitrateUL, vendorID3GPP); gul != nil {
-			qos.GuaranteedBitrateUL = uint32(gul.Data.(datatype.Unsigned32))
+			qos.GuaranteedBitrateUL = u32(gul)
 		}
 		if gdl := t.findAVPInGrouped(g, avpGuaranteedBitrateDL, vendorID3GPP); gdl != nil {
-			qos.GuaranteedBitrateDL = uint32(gdl.Data.(datatype.Unsigned32))
+			qos.GuaranteedBitrateDL = u32(gdl)
 		}
 		if bi := t.findAVPInGrouped(g, avpBearerIdentifier, vendorID3GPP); bi != nil {
 			qos.BearerIdentifier = bi.Data.Serialize()
@@ -491,6 +511,8 @@ func (t *Translator) parseQoSInformation(a *diam.AVP) *QoSInformation {
 		if arp := t.findAVPInGrouped(g, avpAllocationRetentionPriority, vendorID3GPP); arp != nil {
 			qos.AllocationRetentionPriority = t.parseARP(arp)
 		}
+		qos.APNAggregateMaxBitrateUL = u32(t.findAVPInGrouped(g, avpAPNAggregateMaxBitrateUL, vendorID3GPP))
+		qos.APNAggregateMaxBitrateDL = u32(t.findAVPInGrouped(g, avpAPNAggregateMaxBitrateDL, vendorID3GPP))
 		return qos
 	}
 	return nil
@@ -500,13 +522,13 @@ func (t *Translator) parseARP(a *diam.AVP) *AllocationRetentionPriority {
 	if g, ok := a.Data.(*diam.GroupedAVP); ok {
 		arp := &AllocationRetentionPriority{}
 		if pl := t.findAVPInGrouped(g, avpPriorityLevel, vendorID3GPP); pl != nil {
-			arp.PriorityLevel = uint32(pl.Data.(datatype.Unsigned32))
+			arp.PriorityLevel = u32(pl)
 		}
 		if pc := t.findAVPInGrouped(g, avpPreEmptionCapability, vendorID3GPP); pc != nil {
-			arp.PreEmptionCapability = uint32(pc.Data.(datatype.Enumerated))
+			arp.PreEmptionCapability = u32p(pc)
 		}
 		if pv := t.findAVPInGrouped(g, avpPreEmptionVulnerability, vendorID3GPP); pv != nil {
-			arp.PreEmptionVulnerability = uint32(pv.Data.(datatype.Enumerated))
+			arp.PreEmptionVulnerability = u32p(pv)
 		}
 		return arp
 	}
@@ -517,26 +539,14 @@ func (t *Translator) parseDefaultEPSBearerQoS(a *diam.AVP) *DefaultEPSBearerQoS 
 	if g, ok := a.Data.(*diam.GroupedAVP); ok {
 		qos := &DefaultEPSBearerQoS{}
 		if qci := t.findAVPInGrouped(g, avpQoSClassIdentifier, vendorID3GPP); qci != nil {
-			qos.QoSClassIdentifier = uint32(qci.Data.(datatype.Enumerated))
+			qos.QoSClassIdentifier = u32(qci)
 		}
 		if arp := t.findAVPInGrouped(g, avpAllocationRetentionPriority, vendorID3GPP); arp != nil {
 			qos.AllocationRetentionPriority = t.parseARP(arp)
 		}
+		qos.APNAggregateMaxBitrateUL = u32(t.findAVPInGrouped(g, avpAPNAggregateMaxBitrateUL, vendorID3GPP))
+		qos.APNAggregateMaxBitrateDL = u32(t.findAVPInGrouped(g, avpAPNAggregateMaxBitrateDL, vendorID3GPP))
 		return qos
-	}
-	return nil
-}
-
-func (t *Translator) parseAPNAMBR(a *diam.AVP) *APNAMBR {
-	if g, ok := a.Data.(*diam.GroupedAVP); ok {
-		ambr := &APNAMBR{}
-		if ul := t.findAVPInGrouped(g, avpAPNAggregateMaxBitrateUL, vendorID3GPP); ul != nil {
-			ambr.APNAggregateMaxBitrateUL = uint32(ul.Data.(datatype.Unsigned32))
-		}
-		if dl := t.findAVPInGrouped(g, avpAPNAggregateMaxBitrateDL, vendorID3GPP); dl != nil {
-			ambr.APNAggregateMaxBitrateDL = uint32(dl.Data.(datatype.Unsigned32))
-		}
-		return ambr
 	}
 	return nil
 }
@@ -545,7 +555,7 @@ func (t *Translator) parseEventTriggers(m *diam.Message) []uint32 {
 	var triggers []uint32
 	for _, a := range m.AVP {
 		if a.Code == avpEventTrigger && a.VendorID == vendorID3GPP {
-			triggers = append(triggers, uint32(a.Data.(datatype.Enumerated)))
+			triggers = append(triggers, u32(a))
 		}
 	}
 	return triggers
@@ -575,13 +585,13 @@ func (t *Translator) parseUsageMonitoringInfo(g *diam.GroupedAVP) UsageMonitorin
 		umi.UsedServiceUnit = t.parseServiceUnit(usu)
 	}
 	if uml := t.findAVPInGrouped(g, avpUsageMonitoringLevel, vendorID3GPP); uml != nil {
-		umi.UsageMonitoringLevel = uint32(uml.Data.(datatype.Enumerated))
+		umi.UsageMonitoringLevel = u32p(uml)
 	}
 	if umr := t.findAVPInGrouped(g, avpUsageMonitoringReport, vendorID3GPP); umr != nil {
-		umi.UsageMonitoringReport = uint32(umr.Data.(datatype.Enumerated))
+		umi.UsageMonitoringReport = u32p(umr)
 	}
 	if ums := t.findAVPInGrouped(g, avpUsageMonitoringSupport, vendorID3GPP); ums != nil {
-		umi.UsageMonitoringSupport = uint32(ums.Data.(datatype.Enumerated))
+		umi.UsageMonitoringSupport = u32p(ums)
 	}
 	return umi
 }
@@ -590,20 +600,26 @@ func (t *Translator) parseServiceUnit(a *diam.AVP) *charging.ServiceUnit {
 	if g, ok := a.Data.(*diam.GroupedAVP); ok {
 		su := &charging.ServiceUnit{}
 		if ccTime := t.findAVPInGrouped(g, avpCCTime, 0); ccTime != nil {
-			su.CCTime = uint32(ccTime.Data.(datatype.Unsigned32))
+			su.CCTime = u32(ccTime)
 		}
 		if ccTotal := t.findAVPInGrouped(g, avpCCTotalOctets, 0); ccTotal != nil {
-			su.CCTotalOctets = uint64(ccTotal.Data.(datatype.Unsigned64))
+			su.CCTotalOctets = u64(ccTotal)
 		}
 		if ccIn := t.findAVPInGrouped(g, avpCCInputOctets, 0); ccIn != nil {
-			su.CCInputOctets = uint64(ccIn.Data.(datatype.Unsigned64))
+			su.CCInputOctets = u64(ccIn)
 		}
 		if ccOut := t.findAVPInGrouped(g, avpCCOutputOctets, 0); ccOut != nil {
-			su.CCOutputOctets = uint64(ccOut.Data.(datatype.Unsigned64))
+			su.CCOutputOctets = u64(ccOut)
 		}
 		return su
 	}
 	return nil
+}
+
+// ChargingRuleReports reads the Charging-Rule-Report AVPs of a CCR or RAA
+// (TS 29.212 §5.3.18).
+func (t *Translator) ChargingRuleReports(m *diam.Message) []ChargingRuleReport {
+	return t.parseChargingRuleReports(m)
 }
 
 func (t *Translator) parseChargingRuleReports(m *diam.Message) []ChargingRuleReport {
@@ -632,10 +648,10 @@ func (t *Translator) parseChargingRuleReport(g *diam.GroupedAVP) ChargingRuleRep
 		crr.BearerIdentifier = bi.Data.Serialize()
 	}
 	if status := t.findAVPInGrouped(g, avpPCCRuleStatus, vendorID3GPP); status != nil {
-		crr.PCCRuleStatus = uint32(status.Data.(datatype.Enumerated))
+		crr.PCCRuleStatus = u32p(status)
 	}
 	if fc := t.findAVPInGrouped(g, avpRuleFailureCode, vendorID3GPP); fc != nil {
-		crr.RuleFailureCode = uint32(fc.Data.(datatype.Enumerated))
+		crr.RuleFailureCode = u32(fc)
 	}
 	return crr
 }
@@ -648,22 +664,22 @@ func (t *Translator) buildChargingRuleInstall(cri *ChargingRuleInstall) *diam.Gr
 	g := &diam.GroupedAVP{AVP: []*diam.AVP{}}
 
 	for _, name := range cri.ChargingRuleName {
-		g.AVP = append(g.AVP, diam.NewAVP(avpChargingRuleName, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.OctetString(name)))
+		g.AVP = append(g.AVP, avpGx(avpChargingRuleName, datatype.OctetString(name)))
 	}
 	for _, baseName := range cri.ChargingRuleBaseName {
-		g.AVP = append(g.AVP, diam.NewAVP(avpChargingRuleBaseName, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.UTF8String(baseName)))
+		g.AVP = append(g.AVP, avpGx(avpChargingRuleBaseName, datatype.UTF8String(baseName)))
 	}
 	for _, rule := range cri.ChargingRuleDefinition {
-		g.AVP = append(g.AVP, diam.NewAVP(avpChargingRuleDefinition, avp.Mbit|avp.Vbit, vendorID3GPP, t.buildChargingRuleDefinition(&rule)))
+		g.AVP = append(g.AVP, avpGx(avpChargingRuleDefinition, t.buildChargingRuleDefinition(&rule)))
 	}
 	if len(cri.BearerIdentifier) > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpBearerIdentifier, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.OctetString(cri.BearerIdentifier)))
+		g.AVP = append(g.AVP, avpGx(avpBearerIdentifier, datatype.OctetString(cri.BearerIdentifier)))
 	}
 	if cri.RuleActivationTime > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpRuleActivationTime, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Time(time.Unix(cri.RuleActivationTime, 0))))
+		g.AVP = append(g.AVP, avpGx(avpRuleActivationTime, datatype.Time(time.Unix(cri.RuleActivationTime, 0))))
 	}
 	if cri.RuleDeactivationTime > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpRuleDeactivationTime, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Time(time.Unix(cri.RuleDeactivationTime, 0))))
+		g.AVP = append(g.AVP, avpGx(avpRuleDeactivationTime, datatype.Time(time.Unix(cri.RuleDeactivationTime, 0))))
 	}
 
 	return g
@@ -673,10 +689,10 @@ func (t *Translator) buildChargingRuleRemove(crr *ChargingRuleRemove) *diam.Grou
 	g := &diam.GroupedAVP{AVP: []*diam.AVP{}}
 
 	for _, name := range crr.ChargingRuleName {
-		g.AVP = append(g.AVP, diam.NewAVP(avpChargingRuleName, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.OctetString(name)))
+		g.AVP = append(g.AVP, avpGx(avpChargingRuleName, datatype.OctetString(name)))
 	}
 	for _, baseName := range crr.ChargingRuleBaseName {
-		g.AVP = append(g.AVP, diam.NewAVP(avpChargingRuleBaseName, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.UTF8String(baseName)))
+		g.AVP = append(g.AVP, avpGx(avpChargingRuleBaseName, datatype.UTF8String(baseName)))
 	}
 
 	return g
@@ -685,7 +701,7 @@ func (t *Translator) buildChargingRuleRemove(crr *ChargingRuleRemove) *diam.Grou
 func (t *Translator) buildChargingRuleDefinition(rule *ChargingRule) *diam.GroupedAVP {
 	g := &diam.GroupedAVP{AVP: []*diam.AVP{}}
 
-	g.AVP = append(g.AVP, diam.NewAVP(avpChargingRuleName, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.OctetString(rule.ChargingRuleName)))
+	g.AVP = append(g.AVP, avpGx(avpChargingRuleName, datatype.OctetString(rule.ChargingRuleName)))
 
 	if rule.ServiceIdentifier > 0 {
 		g.AVP = append(g.AVP, diam.NewAVP(avpServiceIdentifier, avp.Mbit, 0, datatype.Unsigned32(rule.ServiceIdentifier)))
@@ -693,28 +709,52 @@ func (t *Translator) buildChargingRuleDefinition(rule *ChargingRule) *diam.Group
 	if rule.RatingGroup > 0 {
 		g.AVP = append(g.AVP, diam.NewAVP(avpRatingGroup, avp.Mbit, 0, datatype.Unsigned32(rule.RatingGroup)))
 	}
-	for _, fd := range rule.FlowDescription {
-		g.AVP = append(g.AVP, diam.NewAVP(avpFlowDescription, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.IPFilterRule(fd)))
+	// Flow-Description belongs in Flow-Information (TS 29.212 §5.3.4,
+	// §5.3.53); flow_description entries each become one.
+	for _, fi := range rule.FlowInformation {
+		g.AVP = append(g.AVP, avpGx(avpFlowInformation, buildFlowInformation(fi)))
 	}
-	if rule.FlowStatus > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpFlowStatus, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Enumerated(rule.FlowStatus)))
+	for _, fd := range rule.FlowDescription {
+		g.AVP = append(g.AVP, avpGx(avpFlowInformation, buildFlowInformation(FlowInfo{FlowDescription: fd})))
+	}
+	if rule.FlowStatus != nil {
+		g.AVP = append(g.AVP, avpGx(avpFlowStatus, datatype.Enumerated(*rule.FlowStatus)))
 	}
 	if rule.QoSInformation != nil {
-		g.AVP = append(g.AVP, diam.NewAVP(avpQoSInformation, avp.Mbit|avp.Vbit, vendorID3GPP, t.buildQoSInformation(rule.QoSInformation)))
+		g.AVP = append(g.AVP, avpGx(avpQoSInformation, t.buildQoSInformation(rule.QoSInformation)))
 	}
-	if rule.ReportingLevel > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpReportingLevel, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Enumerated(rule.ReportingLevel)))
+	if rule.ReportingLevel != nil {
+		g.AVP = append(g.AVP, avpGx(avpReportingLevel, datatype.Enumerated(*rule.ReportingLevel)))
 	}
-	g.AVP = append(g.AVP, diam.NewAVP(avpOnline, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Enumerated(rule.Online)))
-	g.AVP = append(g.AVP, diam.NewAVP(avpOffline, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Enumerated(rule.Offline)))
-	if rule.MeteringMethod > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpMeteringMethod, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Enumerated(rule.MeteringMethod)))
+	if rule.Online != nil {
+		g.AVP = append(g.AVP, avpGx(avpOnline, datatype.Enumerated(*rule.Online)))
+	}
+	if rule.Offline != nil {
+		g.AVP = append(g.AVP, avpGx(avpOffline, datatype.Enumerated(*rule.Offline)))
+	}
+	if rule.MeteringMethod != nil {
+		g.AVP = append(g.AVP, avpGx(avpMeteringMethod, datatype.Enumerated(*rule.MeteringMethod)))
 	}
 	if rule.Precedence > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpPrecedence, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Unsigned32(rule.Precedence)))
+		g.AVP = append(g.AVP, avpGx(avpPrecedence, datatype.Unsigned32(rule.Precedence)))
 	}
 	if len(rule.MonitoringKey) > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpMonitoringKey, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.OctetString(rule.MonitoringKey)))
+		g.AVP = append(g.AVP, avpGx(avpMonitoringKey, datatype.OctetString(rule.MonitoringKey)))
+	}
+	if r := rule.RedirectInformation; r != nil {
+		// Redirect-Information (§5.3.82): Redirect-Support (Gx) and the
+		// RFC 8506 Redirect-Address-Type and Redirect-Server-Address.
+		ri := &diam.GroupedAVP{}
+		if r.RedirectSupport != nil {
+			ri.AddAVP(avpGx(avpRedirectSupport, datatype.Enumerated(*r.RedirectSupport)))
+		}
+		if r.RedirectServerAddress != "" {
+			if r.RedirectAddressType != nil {
+				ri.AddAVP(diam.NewAVP(avpRedirectAddressType, avp.Mbit, 0, datatype.Enumerated(*r.RedirectAddressType)))
+			}
+			ri.AddAVP(diam.NewAVP(avpRedirectServerAddress, avp.Mbit, 0, datatype.UTF8String(r.RedirectServerAddress)))
+		}
+		g.AVP = append(g.AVP, avpGx(avpRedirectInformation, ri))
 	}
 
 	return g
@@ -724,25 +764,31 @@ func (t *Translator) buildQoSInformation(qos *QoSInformation) *diam.GroupedAVP {
 	g := &diam.GroupedAVP{AVP: []*diam.AVP{}}
 
 	if qos.QoSClassIdentifier > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpQoSClassIdentifier, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Enumerated(qos.QoSClassIdentifier)))
+		g.AVP = append(g.AVP, avpGx(avpQoSClassIdentifier, datatype.Enumerated(qos.QoSClassIdentifier)))
 	}
 	if qos.MaxRequestedBandwidthUL > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpMaxRequestedBandwidthUL, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Unsigned32(qos.MaxRequestedBandwidthUL)))
+		g.AVP = append(g.AVP, avpGx(avpMaxRequestedBandwidthUL, datatype.Unsigned32(qos.MaxRequestedBandwidthUL)))
 	}
 	if qos.MaxRequestedBandwidthDL > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpMaxRequestedBandwidthDL, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Unsigned32(qos.MaxRequestedBandwidthDL)))
+		g.AVP = append(g.AVP, avpGx(avpMaxRequestedBandwidthDL, datatype.Unsigned32(qos.MaxRequestedBandwidthDL)))
 	}
 	if qos.GuaranteedBitrateUL > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpGuaranteedBitrateUL, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Unsigned32(qos.GuaranteedBitrateUL)))
+		g.AVP = append(g.AVP, avpGx(avpGuaranteedBitrateUL, datatype.Unsigned32(qos.GuaranteedBitrateUL)))
 	}
 	if qos.GuaranteedBitrateDL > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpGuaranteedBitrateDL, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Unsigned32(qos.GuaranteedBitrateDL)))
+		g.AVP = append(g.AVP, avpGx(avpGuaranteedBitrateDL, datatype.Unsigned32(qos.GuaranteedBitrateDL)))
 	}
 	if len(qos.BearerIdentifier) > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpBearerIdentifier, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.OctetString(qos.BearerIdentifier)))
+		g.AVP = append(g.AVP, avpGx(avpBearerIdentifier, datatype.OctetString(qos.BearerIdentifier)))
 	}
 	if qos.AllocationRetentionPriority != nil {
-		g.AVP = append(g.AVP, diam.NewAVP(avpAllocationRetentionPriority, avp.Mbit|avp.Vbit, vendorID3GPP, t.buildARP(qos.AllocationRetentionPriority)))
+		g.AVP = append(g.AVP, avpGx(avpAllocationRetentionPriority, t.buildARP(qos.AllocationRetentionPriority)))
+	}
+	if qos.APNAggregateMaxBitrateUL > 0 {
+		g.AVP = append(g.AVP, avpGx(avpAPNAggregateMaxBitrateUL, datatype.Unsigned32(qos.APNAggregateMaxBitrateUL)))
+	}
+	if qos.APNAggregateMaxBitrateDL > 0 {
+		g.AVP = append(g.AVP, avpGx(avpAPNAggregateMaxBitrateDL, datatype.Unsigned32(qos.APNAggregateMaxBitrateDL)))
 	}
 
 	return g
@@ -751,9 +797,13 @@ func (t *Translator) buildQoSInformation(qos *QoSInformation) *diam.GroupedAVP {
 func (t *Translator) buildARP(arp *AllocationRetentionPriority) *diam.GroupedAVP {
 	g := &diam.GroupedAVP{AVP: []*diam.AVP{}}
 
-	g.AVP = append(g.AVP, diam.NewAVP(avpPriorityLevel, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Unsigned32(arp.PriorityLevel)))
-	g.AVP = append(g.AVP, diam.NewAVP(avpPreEmptionCapability, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Enumerated(arp.PreEmptionCapability)))
-	g.AVP = append(g.AVP, diam.NewAVP(avpPreEmptionVulnerability, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Enumerated(arp.PreEmptionVulnerability)))
+	g.AVP = append(g.AVP, avpGx(avpPriorityLevel, datatype.Unsigned32(arp.PriorityLevel)))
+	if arp.PreEmptionCapability != nil {
+		g.AVP = append(g.AVP, avpGx(avpPreEmptionCapability, datatype.Enumerated(*arp.PreEmptionCapability)))
+	}
+	if arp.PreEmptionVulnerability != nil {
+		g.AVP = append(g.AVP, avpGx(avpPreEmptionVulnerability, datatype.Enumerated(*arp.PreEmptionVulnerability)))
+	}
 
 	return g
 }
@@ -761,19 +811,12 @@ func (t *Translator) buildARP(arp *AllocationRetentionPriority) *diam.GroupedAVP
 func (t *Translator) buildDefaultEPSBearerQoS(qos *DefaultEPSBearerQoS) *diam.GroupedAVP {
 	g := &diam.GroupedAVP{AVP: []*diam.AVP{}}
 
-	g.AVP = append(g.AVP, diam.NewAVP(avpQoSClassIdentifier, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Enumerated(qos.QoSClassIdentifier)))
-	if qos.AllocationRetentionPriority != nil {
-		g.AVP = append(g.AVP, diam.NewAVP(avpAllocationRetentionPriority, avp.Mbit|avp.Vbit, vendorID3GPP, t.buildARP(qos.AllocationRetentionPriority)))
+	if qos.QoSClassIdentifier > 0 { // QCI values start at 1 (§5.3.17)
+		g.AVP = append(g.AVP, avpGx(avpQoSClassIdentifier, datatype.Enumerated(qos.QoSClassIdentifier)))
 	}
-
-	return g
-}
-
-func (t *Translator) buildAPNAMBR(ambr *APNAMBR) *diam.GroupedAVP {
-	g := &diam.GroupedAVP{AVP: []*diam.AVP{}}
-
-	g.AVP = append(g.AVP, diam.NewAVP(avpAPNAggregateMaxBitrateUL, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Unsigned32(ambr.APNAggregateMaxBitrateUL)))
-	g.AVP = append(g.AVP, diam.NewAVP(avpAPNAggregateMaxBitrateDL, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Unsigned32(ambr.APNAggregateMaxBitrateDL)))
+	if qos.AllocationRetentionPriority != nil {
+		g.AVP = append(g.AVP, avpGx(avpAllocationRetentionPriority, t.buildARP(qos.AllocationRetentionPriority)))
+	}
 
 	return g
 }
@@ -782,19 +825,19 @@ func (t *Translator) buildUsageMonitoringInfo(umi *UsageMonitoringInfo) *diam.Gr
 	g := &diam.GroupedAVP{AVP: []*diam.AVP{}}
 
 	if len(umi.MonitoringKey) > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpMonitoringKey, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.OctetString(umi.MonitoringKey)))
+		g.AVP = append(g.AVP, avpGx(avpMonitoringKey, datatype.OctetString(umi.MonitoringKey)))
 	}
 	if umi.GrantedServiceUnit != nil {
 		g.AVP = append(g.AVP, diam.NewAVP(avpGrantedServiceUnit, avp.Mbit, 0, t.buildServiceUnit(umi.GrantedServiceUnit)))
 	}
-	if umi.UsageMonitoringLevel > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpUsageMonitoringLevel, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Enumerated(umi.UsageMonitoringLevel)))
+	if umi.UsageMonitoringLevel != nil {
+		g.AVP = append(g.AVP, avpGx(avpUsageMonitoringLevel, datatype.Enumerated(*umi.UsageMonitoringLevel)))
 	}
-	if umi.UsageMonitoringReport > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpUsageMonitoringReport, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Enumerated(umi.UsageMonitoringReport)))
+	if umi.UsageMonitoringReport != nil {
+		g.AVP = append(g.AVP, avpGx(avpUsageMonitoringReport, datatype.Enumerated(*umi.UsageMonitoringReport)))
 	}
-	if umi.UsageMonitoringSupport > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpUsageMonitoringSupport, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Enumerated(umi.UsageMonitoringSupport)))
+	if umi.UsageMonitoringSupport != nil {
+		g.AVP = append(g.AVP, avpGx(avpUsageMonitoringSupport, datatype.Enumerated(*umi.UsageMonitoringSupport)))
 	}
 
 	return g
@@ -840,4 +883,96 @@ func (t *Translator) GetIMSI(event *GxEvent) string {
 // HexEncode encodes bytes to hex string
 func HexEncode(data []byte) string {
 	return hex.EncodeToString(data)
+}
+
+// withAPNAMBR is qos with the legacy apn_ambr folded into its
+// APN-Aggregate-Max-Bitrate-UL/DL where those are not set.
+func withAPNAMBR(qos *QoSInformation, ambr *APNAMBR) *QoSInformation {
+	if ambr == nil {
+		return qos
+	}
+	out := QoSInformation{}
+	if qos != nil {
+		out = *qos
+	}
+	if out.APNAggregateMaxBitrateUL == 0 {
+		out.APNAggregateMaxBitrateUL = ambr.APNAggregateMaxBitrateUL
+	}
+	if out.APNAggregateMaxBitrateDL == 0 {
+		out.APNAggregateMaxBitrateDL = ambr.APNAggregateMaxBitrateDL
+	}
+	return &out
+}
+
+func buildFlowInformation(fi FlowInfo) *diam.GroupedAVP {
+	g := &diam.GroupedAVP{}
+	if fi.FlowDescription != "" {
+		g.AddAVP(avpGx(avpFlowDescription, datatype.IPFilterRule(fi.FlowDescription)))
+	}
+	if dir := flowDirection(fi); dir != nil {
+		g.AddAVP(avpGx(avpFlowDirection, datatype.Enumerated(*dir)))
+	}
+	return g
+}
+
+// u32 reads an Unsigned32, Enumerated or Integer32 AVP; anything else, or
+// nil, reads as 0. u32p keeps absence apart from 0.
+func u32(a *diam.AVP) uint32 { v, _ := u32ok(a); return v }
+
+func u32p(a *diam.AVP) *uint32 {
+	if v, ok := u32ok(a); ok {
+		return &v
+	}
+	return nil
+}
+
+func u32ok(a *diam.AVP) (uint32, bool) {
+	if a == nil {
+		return 0, false
+	}
+	switch v := a.Data.(type) {
+	case datatype.Unsigned32:
+		return uint32(v), true
+	case datatype.Enumerated:
+		return uint32(v), true
+	case datatype.Integer32:
+		return uint32(v), true
+	}
+	return 0, false
+}
+
+func u64(a *diam.AVP) uint64 {
+	if a == nil {
+		return 0
+	}
+	switch v := a.Data.(type) {
+	case datatype.Unsigned64:
+		return uint64(v)
+	case datatype.Unsigned32:
+		return uint64(v)
+	}
+	return 0
+}
+
+// flowDirection is fi's Flow-Direction: as given, or for a description
+// "permit out …" DOWNLINK (1) and "permit in …" UPLINK (2) (TS 29.212
+// §5.3.53: "out" refers to downlink, "in" to uplink). With neither, none.
+func flowDirection(fi FlowInfo) *uint32 {
+	if fi.FlowDirection != nil {
+		return fi.FlowDirection
+	}
+	f := strings.Fields(fi.FlowDescription)
+	if len(f) < 2 {
+		return nil
+	}
+	var dir uint32
+	switch f[1] {
+	case "out":
+		dir = 1
+	case "in":
+		dir = 2
+	default:
+		return nil
+	}
+	return &dir
 }

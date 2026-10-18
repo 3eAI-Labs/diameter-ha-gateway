@@ -107,7 +107,7 @@ func TestGyIntegration_InitialRequest(t *testing.T) {
 		CCRequestNumber: 0,
 		MSCC: []charging.MSCC{
 			{
-				RatingGroup: 100,
+				RatingGroup: ratingGroup(100),
 				GrantedServiceUnit: &charging.ServiceUnit{
 					CCTotalOctets: 10485760,
 					CCTime:        3600,
@@ -309,7 +309,7 @@ func TestRoIntegration_IMSVoiceCall(t *testing.T) {
 		CCRequestNumber: 0,
 		MSCC: []charging.MSCC{
 			{
-				RatingGroup: 100,
+				RatingGroup: ratingGroup(100),
 				GrantedServiceUnit: &charging.ServiceUnit{
 					CCTime: 300,
 				},
@@ -454,3 +454,5 @@ func addSubscriptionID(m *diam.Message, subType uint32, data string) {
 	}
 	m.NewAVP(443, avp.Mbit, 0, g)
 }
+
+func ratingGroup(v uint32) *uint32 { return &v }

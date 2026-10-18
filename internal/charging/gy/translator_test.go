@@ -71,7 +71,7 @@ func TestToCCREvent_MSCC(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, event.MSCC, 1)
-	assert.Equal(t, uint32(100), event.MSCC[0].RatingGroup)
+	assert.Equal(t, rg(100), event.MSCC[0].RatingGroup)
 	assert.Equal(t, uint32(1), event.MSCC[0].ServiceIdentifier)
 }
 
@@ -142,7 +142,7 @@ func TestToCCAMessage_WithMSCC(t *testing.T) {
 		CCRequestNumber: 1,
 		MSCC: []charging.MSCC{
 			{
-				RatingGroup:       100,
+				RatingGroup:       rg(100),
 				ServiceIdentifier: 1,
 				GrantedServiceUnit: &charging.ServiceUnit{
 					CCTime:        1800,
@@ -241,7 +241,7 @@ func TestToJSONAnswer(t *testing.T) {
 	assert.Equal(t, uint32(1), answer.CCRequestType)
 	assert.Equal(t, "ocs.example.com", answer.OriginHost)
 	require.Len(t, answer.MSCC, 1)
-	assert.Equal(t, uint32(100), answer.MSCC[0].RatingGroup)
+	assert.Equal(t, rg(100), answer.MSCC[0].RatingGroup)
 	assert.Equal(t, uint32(3600), answer.MSCC[0].GrantedServiceUnit.CCTime)
 }
 
@@ -438,7 +438,7 @@ func BenchmarkToCCAMessage(b *testing.B) {
 		CCRequestNumber: 0,
 		MSCC: []charging.MSCC{
 			{
-				RatingGroup: 100,
+				RatingGroup: rg(100),
 				GrantedServiceUnit: &charging.ServiceUnit{
 					CCTime:        1800,
 					CCTotalOctets: 50 * 1024 * 1024,
@@ -463,7 +463,7 @@ func BenchmarkToJSONAnswer(b *testing.B) {
 		CCRequestNumber: 0,
 		MSCC: []charging.MSCC{
 			{
-				RatingGroup:        100,
+				RatingGroup:        rg(100),
 				GrantedServiceUnit: &charging.ServiceUnit{CCTime: 3600},
 				ValidityTime:       1800,
 				ResultCode:         2001,
@@ -476,3 +476,5 @@ func BenchmarkToJSONAnswer(b *testing.B) {
 		_, _ = tr.ToJSONAnswer(jsonData)
 	}
 }
+
+func rg(v uint32) *uint32 { return &v }

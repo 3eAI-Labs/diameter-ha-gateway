@@ -142,7 +142,7 @@ func TestToCCAMessage_WithMSCC(t *testing.T) {
 		CCRequestNumber: 0,
 		MSCC: []charging.MSCC{
 			{
-				RatingGroup:       100,
+				RatingGroup:       rg(100),
 				ServiceIdentifier: 1,
 				GrantedServiceUnit: &charging.ServiceUnit{
 					CCTime: 300,
@@ -192,7 +192,7 @@ func TestToJSONAnswer(t *testing.T) {
 	assert.Equal(t, uint32(4), answer.CCRequestType) // EVENT_REQUEST
 	assert.Equal(t, "ocs.example.com", answer.OriginHost)
 	require.Len(t, answer.MSCC, 1)
-	assert.Equal(t, uint32(100), answer.MSCC[0].RatingGroup)
+	assert.Equal(t, rg(100), answer.MSCC[0].RatingGroup)
 }
 
 func TestToJSONAnswer_InvalidJSON(t *testing.T) {
@@ -352,7 +352,7 @@ func BenchmarkToCCAMessage(b *testing.B) {
 		CCRequestNumber: 0,
 		MSCC: []charging.MSCC{
 			{
-				RatingGroup:        100,
+				RatingGroup:        rg(100),
 				GrantedServiceUnit: &charging.ServiceUnit{CCTime: 300},
 				ResultCode:         diam.Success,
 			},
@@ -373,7 +373,7 @@ func BenchmarkToJSONAnswer(b *testing.B) {
 		CCRequestNumber: 0,
 		MSCC: []charging.MSCC{
 			{
-				RatingGroup:        100,
+				RatingGroup:        rg(100),
 				GrantedServiceUnit: &charging.ServiceUnit{CCTime: 300},
 				ResultCode:         2001,
 			},
@@ -384,4 +384,27 @@ func BenchmarkToJSONAnswer(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, _ = tr.ToJSONAnswer(jsonData)
 	}
+}
+
+func rg(v uint32) *uint32 { return &v }
+
+// TestToCCAMessage_MSCCAsGy: a Ro CCA's MSCC carries the quota thresholds,
+// Quota-Holding-Time and the Final-Unit-Indication's Redirect-Server, as a
+// Gy CCA does; Ro wrote Rating-Group, Service-Identifier, GSU, Result-Code,
+// Validity-Time and the Final-Unit-Action only.
+func TestToCCAMessage_MSCCAsGy(t *testing.T) {
+	answer := &RoAnswer{ResultCode: 2001, MSCC: []charging.MSCC{{
+		GrantedServiceUnit: &charging.ServiceUnit{CCTime: 60},
+		TimeQuotaThreshold: 10, QuotaHoldingTime: rg(0),
+		FinalUnitIndication: &charging.FinalUnitIndication{FinalUnitAction: 1,
+			RedirectServer: &charging.RedirectServer{RedirectAddressType: 2, RedirectServerAddress: "http://topup"}},
+	}}}
+	cca, err := NewTranslator().ToCCAMessage(answer, diam.NewRequest(272, 4, dict.Default))
+	require.NoError(t, err)
+	got := charging.ReadMSCCs(cca.AVP)
+	require.Len(t, got, 1)
+	assert.Equal(t, uint32(10), got[0].TimeQuotaThreshold)
+	assert.Equal(t, rg(0), got[0].QuotaHoldingTime)
+	require.NotNil(t, got[0].FinalUnitIndication.RedirectServer)
+	assert.Equal(t, "http://topup", got[0].FinalUnitIndication.RedirectServer.RedirectServerAddress)
 }

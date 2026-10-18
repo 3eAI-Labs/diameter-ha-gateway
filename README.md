@@ -112,7 +112,12 @@ answers the request with its publish acknowledgement, and the requester never se
   `nats.request_timeout` are not used.
 - **In-memory state per replica.** Pending gateway-initiated requests, Gx session-to-peer bindings
   and the redirect cache live in one replica's memory and are lost when it stops.
-- Gy re-authorisation (RAR) is not implemented.
+- **No OCS-initiated Gy or Ro requests.** RAR and ASR under Application-Id 4 (TS 32.299 §6.4.6-6.4.13)
+  are not implemented; an OCS cannot ask the gateway to re-authorise or abort a credit-control
+  session.
+- **Gx ASR is not part of TS 29.212.** `diameter.gx.asr` sends an RFC 4006 Abort-Session-Request,
+  which a PCEF need not support; TS 29.212 ends an IP-CAN session with a RAR, or a CCA to a CCR
+  update, carrying `session_release_cause` (§4.5.9).
 
 ## Contributing
 

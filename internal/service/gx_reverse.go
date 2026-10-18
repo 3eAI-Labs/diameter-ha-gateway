@@ -497,7 +497,8 @@ func (s *GxReverseService) replyAnswer(msg *nats.Msg, cmd string, diamMsg *diam.
 	resultCode, expCode := diameter.AnswerResult(diamMsg)
 	switch cmd {
 	case "RAR":
-		resp := gx.GxReAuthAnswer{ResultCode: resultCode, ExperimentalResultCode: expCode}
+		resp := gx.GxReAuthAnswer{ResultCode: resultCode, ExperimentalResultCode: expCode,
+			ChargingRuleReport: gx.NewTranslator().ChargingRuleReports(diamMsg)}
 		data, _ := json.Marshal(resp)
 		s.natsClient.Respond(msg, data)
 	case "ASR":

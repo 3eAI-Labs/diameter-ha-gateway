@@ -104,13 +104,13 @@ func (t *Translator) ToCCREvent(m *diam.Message, traceID string) (*RoEvent, erro
 
 	// Credit Control AVPs
 	if a := t.findAVP(m, avpCCRequestType, 0); a != nil {
-		event.CCRequestType = uint32(a.Data.(datatype.Enumerated))
+		event.CCRequestType = charging.U32(a)
 	}
 	if a := t.findAVP(m, avpCCRequestNumber, 0); a != nil {
-		event.CCRequestNumber = uint32(a.Data.(datatype.Unsigned32))
+		event.CCRequestNumber = charging.U32(a)
 	}
 	if a := t.findAVP(m, avpOriginStateID, 0); a != nil {
-		event.OriginStateID = uint32(a.Data.(datatype.Unsigned32))
+		event.OriginStateID = charging.U32(a)
 	}
 	if a, err := m.FindAVP(avpEventTimestamp, 0); err == nil {
 		event.EventTimestamp = avpTime(a)
@@ -129,29 +129,29 @@ func (t *Translator) ToCCREvent(m *diam.Message, traceID string) (*RoEvent, erro
 		event.ServiceContextID = avpString(a)
 	}
 	if a := t.findAVP(m, avpServiceIdentifier, 0); a != nil {
-		event.ServiceIdentifier = uint32(a.Data.(datatype.Unsigned32))
+		event.ServiceIdentifier = charging.U32(a)
 	}
 	if a := t.findAVP(m, avpRequestedAction, 0); a != nil {
-		event.RequestedAction = uint32(a.Data.(datatype.Enumerated))
+		event.RequestedAction = charging.U32(a)
 	}
 
 	// Service Units
 	if a := t.findAVP(m, avpRequestedServiceUnit, 0); a != nil {
-		event.RequestedServiceUnit = t.parseServiceUnit(a)
+		event.RequestedServiceUnit = charging.ReadServiceUnit(a)
 	}
 	if a := t.findAVP(m, avpUsedServiceUnit, 0); a != nil {
-		event.UsedServiceUnit = t.parseServiceUnit(a)
+		event.UsedServiceUnit = charging.ReadServiceUnit(a)
 	}
 	if a := t.findAVP(m, avpMultipleServicesIndicator, 0); a != nil {
-		event.MultipleServicesIndicator = uint32(a.Data.(datatype.Enumerated))
+		event.MultipleServicesIndicator = charging.U32(a)
 	}
 
 	// MSCC
-	event.MSCC = t.parseMSCCs(m)
+	event.MSCC = charging.ReadMSCCs(m.AVP)
 
 	// Termination
 	if a := t.findAVP(m, avpTerminationCause, 0); a != nil {
-		event.TerminationCause = uint32(a.Data.(datatype.Enumerated))
+		event.TerminationCause = charging.U32(a)
 	}
 
 	// Service-Information (IMS)
@@ -178,9 +178,9 @@ func (t *Translator) ToCCAMessage(answer *RoAnswer, req *diam.Message) (*diam.Me
 		ans.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(answer.OriginRealm))
 	}
 
-	// MSCC
-	for _, mscc := range answer.MSCC {
-		ans.NewAVP(avpMultipleServicesCreditControl, avp.Mbit, 0, t.buildMSCCGrouped(&mscc))
+	// Multiple-Services-Credit-Control: the codec Gy and Ro share
+	for i := range answer.MSCC {
+		ans.AddAVP(charging.WriteMSCC(&answer.MSCC[i]))
 	}
 
 	// Validity Time
@@ -190,22 +190,16 @@ func (t *Translator) ToCCAMessage(answer *RoAnswer, req *diam.Message) (*diam.Me
 
 	// Final Unit Indication
 	if answer.FinalUnitIndication != nil {
-		ans.NewAVP(avpFinalUnitIndication, avp.Mbit, 0, t.buildFinalUnitIndication(answer.FinalUnitIndication))
+		ans.AddAVP(charging.WriteFinalUnitIndication(answer.FinalUnitIndication))
 	}
 
-	// Failed AVP
-	for _, fa := range answer.FailedAVP {
-		ans.NewAVP(avpFailedAVP, avp.Mbit, 0, &diam.GroupedAVP{
-			AVP: []*diam.AVP{
-				diam.NewAVP(fa.Code, 0, fa.VendorID, datatype.OctetString(fa.Data)),
-			},
-		})
-	}
-
-	// Low Balance (3GPP)
-	if answer.LowBalanceIndication > 0 {
-		ans.NewAVP(2020, avp.Mbit|avp.Vbit, vendorID3GPP, datatype.Enumerated(answer.LowBalanceIndication))
-	}
+	charging.ApplyCCATail(ans, charging.CCATail{
+		CCSessionFailover:    answer.CCSessionFailover,
+		LowBalanceIndication: answer.LowBalanceIndication,
+		RemainingBalance:     answer.RemainingBalance,
+		CostInformation:      answer.CostInformation,
+		FailedAVP:            answer.FailedAVP,
+	})
 
 	return ans, nil
 }
@@ -297,7 +291,7 @@ func (t *Translator) parseSubscriptionIDs(m *diam.Message) []charging.Subscripti
 			if g, ok := a.Data.(*diam.GroupedAVP); ok {
 				var sub charging.SubscriptionID
 				if typeAVP := t.findAVPInGrouped(g, avpSubscriptionIDType, 0); typeAVP != nil {
-					sub.Type = uint32(typeAVP.Data.(datatype.Enumerated))
+					sub.Type = charging.U32(typeAVP)
 				}
 				if dataAVP := t.findAVPInGrouped(g, avpSubscriptionIDData, 0); dataAVP != nil {
 					sub.Data = avpString(dataAVP)
@@ -314,7 +308,7 @@ func (t *Translator) parseUserEquipmentInfo(a *diam.AVP) *charging.UserEquipment
 	if g, ok := a.Data.(*diam.GroupedAVP); ok {
 		info := &charging.UserEquipmentInfo{}
 		if typeAVP := t.findAVPInGrouped(g, avpUserEquipmentInfoType, 0); typeAVP != nil {
-			info.Type = uint32(typeAVP.Data.(datatype.Enumerated))
+			info.Type = charging.U32(typeAVP)
 		}
 		if valAVP := t.findAVPInGrouped(g, avpUserEquipmentInfoValue, 0); valAVP != nil {
 			info.Value = valAVP.Data.Serialize()
@@ -322,64 +316,6 @@ func (t *Translator) parseUserEquipmentInfo(a *diam.AVP) *charging.UserEquipment
 		return info
 	}
 	return nil
-}
-
-func (t *Translator) parseServiceUnit(a *diam.AVP) *charging.ServiceUnit {
-	if g, ok := a.Data.(*diam.GroupedAVP); ok {
-		su := &charging.ServiceUnit{}
-		if ccTime := t.findAVPInGrouped(g, avpCCTime, 0); ccTime != nil {
-			su.CCTime = uint32(ccTime.Data.(datatype.Unsigned32))
-		}
-		if ccTotal := t.findAVPInGrouped(g, avpCCTotalOctets, 0); ccTotal != nil {
-			su.CCTotalOctets = uint64(ccTotal.Data.(datatype.Unsigned64))
-		}
-		if ccIn := t.findAVPInGrouped(g, avpCCInputOctets, 0); ccIn != nil {
-			su.CCInputOctets = uint64(ccIn.Data.(datatype.Unsigned64))
-		}
-		if ccOut := t.findAVPInGrouped(g, avpCCOutputOctets, 0); ccOut != nil {
-			su.CCOutputOctets = uint64(ccOut.Data.(datatype.Unsigned64))
-		}
-		if ccSSU := t.findAVPInGrouped(g, avpCCServiceSpecificUnits, 0); ccSSU != nil {
-			su.CCServiceSpecificUnits = uint64(ccSSU.Data.(datatype.Unsigned64))
-		}
-		return su
-	}
-	return nil
-}
-
-func (t *Translator) parseMSCCs(m *diam.Message) []charging.MSCC {
-	var msccs []charging.MSCC
-
-	for _, a := range m.AVP {
-		if a.Code == avpMultipleServicesCreditControl && a.VendorID == 0 {
-			if g, ok := a.Data.(*diam.GroupedAVP); ok {
-				mscc := charging.MSCC{}
-
-				if rg := t.findAVPInGrouped(g, avpRatingGroup, 0); rg != nil {
-					mscc.RatingGroup = uint32(rg.Data.(datatype.Unsigned32))
-				}
-				if si := t.findAVPInGrouped(g, avpServiceIdentifier, 0); si != nil {
-					mscc.ServiceIdentifier = uint32(si.Data.(datatype.Unsigned32))
-				}
-				if rsu := t.findAVPInGrouped(g, avpRequestedServiceUnit, 0); rsu != nil {
-					mscc.RequestedServiceUnit = t.parseServiceUnit(rsu)
-				}
-
-				// Used Service Units
-				for _, sub := range g.AVP {
-					if sub.Code == avpUsedServiceUnit && sub.VendorID == 0 {
-						if usu := t.parseServiceUnit(sub); usu != nil {
-							mscc.UsedServiceUnit = append(mscc.UsedServiceUnit, *usu)
-						}
-					}
-				}
-
-				msccs = append(msccs, mscc)
-			}
-		}
-	}
-
-	return msccs
 }
 
 func (t *Translator) parseServiceInformation(a *diam.AVP) *RoServiceInformation {
@@ -425,10 +361,10 @@ func (t *Translator) parseIMSInformation(a *diam.AVP) *IMSInformation {
 			ims.EventType = t.parseEventType(et)
 		}
 		if ron := t.findAVPInGrouped(g, avpRoleOfNode, vendorID3GPP); ron != nil {
-			ims.RoleOfNode = uint32(ron.Data.(datatype.Enumerated))
+			ims.RoleOfNode = charging.U32(ron)
 		}
 		if nf := t.findAVPInGrouped(g, avpNodeFunctionality, vendorID3GPP); nf != nil {
-			ims.NodeFunctionality = uint32(nf.Data.(datatype.Enumerated))
+			ims.NodeFunctionality = charging.U32(nf)
 		}
 		if usid := t.findAVPInGrouped(g, avpUserSessionID, vendorID3GPP); usid != nil {
 			ims.UserSessionID = avpString(usid)
@@ -440,7 +376,7 @@ func (t *Translator) parseIMSInformation(a *diam.AVP) *IMSInformation {
 			ims.IMSChargingIdentifier = avpString(ici)
 		}
 		if cc := t.findAVPInGrouped(g, avpCauseCode, vendorID3GPP); cc != nil {
-			ims.CauseCode = int32(cc.Data.(datatype.Integer32))
+			ims.CauseCode = int32(charging.U32(cc))
 		}
 
 		// Calling Party Addresses (multiple)
@@ -477,62 +413,6 @@ func (t *Translator) parseTimeStamps(a *diam.AVP) *TimeStamps {
 // =============================================================================
 // Build AVP Helpers
 // =============================================================================
-
-func (t *Translator) buildMSCCGrouped(mscc *charging.MSCC) *diam.GroupedAVP {
-	g := &diam.GroupedAVP{AVP: []*diam.AVP{}}
-
-	g.AVP = append(g.AVP, diam.NewAVP(avpRatingGroup, avp.Mbit, 0, datatype.Unsigned32(mscc.RatingGroup)))
-
-	if mscc.ServiceIdentifier > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpServiceIdentifier, avp.Mbit, 0, datatype.Unsigned32(mscc.ServiceIdentifier)))
-	}
-
-	if mscc.GrantedServiceUnit != nil {
-		g.AVP = append(g.AVP, diam.NewAVP(avpGrantedServiceUnit, avp.Mbit, 0, t.buildServiceUnit(mscc.GrantedServiceUnit)))
-	}
-
-	if mscc.ResultCode > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpResultCode, avp.Mbit, 0, datatype.Unsigned32(mscc.ResultCode)))
-	}
-
-	if mscc.ValidityTime > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpValidityTime, avp.Mbit, 0, datatype.Unsigned32(mscc.ValidityTime)))
-	}
-
-	if mscc.FinalUnitIndication != nil {
-		g.AVP = append(g.AVP, diam.NewAVP(avpFinalUnitIndication, avp.Mbit, 0, t.buildFinalUnitIndication(mscc.FinalUnitIndication)))
-	}
-
-	return g
-}
-
-func (t *Translator) buildServiceUnit(su *charging.ServiceUnit) *diam.GroupedAVP {
-	g := &diam.GroupedAVP{AVP: []*diam.AVP{}}
-
-	if su.CCTime > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpCCTime, avp.Mbit, 0, datatype.Unsigned32(su.CCTime)))
-	}
-	if su.CCTotalOctets > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpCCTotalOctets, avp.Mbit, 0, datatype.Unsigned64(su.CCTotalOctets)))
-	}
-	if su.CCInputOctets > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpCCInputOctets, avp.Mbit, 0, datatype.Unsigned64(su.CCInputOctets)))
-	}
-	if su.CCOutputOctets > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpCCOutputOctets, avp.Mbit, 0, datatype.Unsigned64(su.CCOutputOctets)))
-	}
-	if su.CCServiceSpecificUnits > 0 {
-		g.AVP = append(g.AVP, diam.NewAVP(avpCCServiceSpecificUnits, avp.Mbit, 0, datatype.Unsigned64(su.CCServiceSpecificUnits)))
-	}
-
-	return g
-}
-
-func (t *Translator) buildFinalUnitIndication(fui *charging.FinalUnitIndication) *diam.GroupedAVP {
-	g := &diam.GroupedAVP{AVP: []*diam.AVP{}}
-	g.AVP = append(g.AVP, diam.NewAVP(avpFinalUnitAction, avp.Mbit, 0, datatype.Enumerated(fui.FinalUnitAction)))
-	return g
-}
 
 // MaskIMSI masks the middle digits of an IMSI for logging
 func (t *Translator) MaskIMSI(imsi string) string {
