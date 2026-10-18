@@ -9,6 +9,59 @@ describes what changed for an installation of 0.9.4.
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-10-18
+
+Chart 0.3.1 (values and schema unchanged). S6c and SGd release: both applications are rewritten
+against TS 29.338 V17.2.0 and work for the first time. Applications using S6c or SGd: read *Changed*;
+the fields earlier releases accepted on `diameter.sgd.srr.request` and `diameter.sgd.tfr.request`
+still work.
+
+### Fixed
+
+- **S6c and SGd work** (TS 29.338 V17.2.0). They are rewritten: up to this release no S6c or SGd
+  message could be decoded and each closed the connection it arrived on, and nothing the gateway
+  sent was well formed.
+  - OFR and TFR are under the SGd Application-Id 16777313, SRR, ALR and RDR under the S6c
+    Application-Id 16777312; ALR uses 16777312 over SGd as well (§6.3.2.2). A CER offering SGd is
+    accepted.
+  - Every command's AVPs follow its Command Code Format, with the codes, types and M bits of TS
+    29.338, 29.173, 29.272, 29.336 and 29.229; the M bit of a re-used AVP is the one each
+    application gives it. Ten AVPs had wrong codes or types, among them MME-Name, MME-Realm,
+    SM-Delivery-Outcome and Additional-Serving-Node.
+  - Report-SM-Delivery-Status (RDR/RDA) is added, in both directions: `diameter.sgd.rdr` and
+    `diameter.sgd.rdr.request`.
+  - Requests carry the P flag; no message carries a Vendor-Specific-Application-Id (§5.3.2.2:
+    "shall not be included"); the header's Message-Length matches the message.
+  - A request missing a mandatory AVP is answered 5005 with a Failed-AVP; a 3GPP result code
+    (5550-5558) is sent in Experimental-Result without Result-Code (§7.3.1), also when the
+    application gives it as `result_code`.
+  - An application request that would leave a mandatory AVP out (an empty `user_identifier`, a
+    number with no digit, an SRR with neither `msisdn` nor `user_name`) is answered 5005 and not
+    sent.
+  - E.164 numbers (MSISDN, SC-Address, node numbers) are TBCD-encoded on the wire.
+
+### Changed
+
+- **S6c and SGd envelopes** (not yet a published contract) follow TS 29.338. For applications of
+  earlier releases, the fields `diameter.sgd.srr.request` and `diameter.sgd.tfr.request` accepted
+  are still accepted (`imsi`, `mme_name` and `mme_realm` as the TFR destination, `sm_rp_pri`), and
+  the reply to `diameter.sgd.srr.request` still carries `mme_name`, `mme_realm`, `sgsn_name`,
+  `sgsn_realm` and `user_name` at top level. Otherwise:
+  - every E.164 number is a string of digits, among them `msisdn` in events and the node numbers,
+    which were base64 bytes;
+  - `serving_node` and `additional_serving_node` are objects, not arrays; the SRA's top-level
+    `3gpp_smsc_address`, `msc_number` and `mme_number_for_mt_sms` are gone (the numbers are in
+    `serving_node`);
+  - SRR events carry no `user_identifier`, which SRR does not have, and no `sm_rp_pri` (SRR-Flags
+    bit 1); OFR events lose `sm_rp_oa_type`, `sm_rp_oa`, `sms_gmsc_address` and
+    `external_identifier`, which were never filled;
+  - TFR events carry `user_name` and no `user_identifier`, `sm_rp_mti`, `sm_rp_smea`, MME or SGSN
+    names, which TFR does not have; `max_retransmissions` is `maximum_retransmission_time`, a time;
+  - `supported_features` is a list of `{vendor_id, feature_list_id, feature_list}`;
+  - SM-Delivery-Outcome is `{mme, msc, sgsn, ip_sm_gw, smsf_3gpp, smsf_non_3gpp}`, each
+    `{sm_delivery_cause, absent_user_diagnostic_sm}`;
+  - the experimental result code constants are those of TS 29.338 §7 (5550-5558).
+
 ## [0.11.0] — 2026-10-18
 
 Chart 0.3.0. Conformance release: Gx, Gy and Ro CCRs that follow the specifications are answered,
@@ -228,7 +281,8 @@ No change to the gateway's behaviour, configuration or NATS contract.
 See the [README](README.md#known-limitations). New in this release: gateway-initiated requests
 reach directly connected peers only, a consequence of binding identities to connections.
 
-[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.3...v0.11.0
 [0.10.3]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.2...v0.10.3
 [0.10.2]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.10.1...v0.10.2

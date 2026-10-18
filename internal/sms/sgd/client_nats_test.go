@@ -42,7 +42,7 @@ func TestStartListening_ReplicasShareRequests(t *testing.T) {
 	inbox := nats.NewInbox()
 	replies, err := smsc.SubscribeSync(inbox)
 	require.NoError(t, err)
-	req, _ := json.Marshal(SRRRequest{TraceID: "t1", MSISDN: "+905551234567", SCAddress: "+905309999999"})
+	req, _ := json.Marshal(SRRRequest{outbound: outbound{TraceID: "t1"}, MSISDN: "905551234567", SCAddress: "905309999999"})
 	require.NoError(t, smsc.PublishRequest(TopicSGdSRRRequest, inbox, req))
 
 	first, err := replies.NextMsg(time.Second)
@@ -76,19 +76,53 @@ func TestHandleSRR_MalformedRequestIsNotUserUnknown(t *testing.T) {
 	assert.EqualValues(t, 5004, ans["result_code"])
 }
 
-// TestDeliver_OnlyFromTheRequestsConnection: an SGd answer is delivered only
-// when it arrives on the connection the request was sent on.
+// TestDeliver_OnlyFromTheRequestsConnection: an S6c/SGd answer is delivered
+// only when it arrives on the connection the request was sent on and
+// answers the request's command.
 func TestDeliver_OnlyFromTheRequestsConnection(t *testing.T) {
 	c := &Client{pendingReqs: map[string]*pendingReq{}}
 	hss, other := &diamtest.Conn{}, &diamtest.Conn{}
 	ch := make(chan *diam.Message, 1)
-	c.pendingReqs["sgd-1"] = &pendingReq{ch: ch, conn: hss}
+	c.pendingReqs["sgd-1"] = &pendingReq{ch: ch, conn: hss, code: CommandSRR}
 
-	sra := diam.NewMessage(CommandSRR, 0, AppIDSGd, 1, 2, nil)
+	sra := diam.NewMessage(CommandSRR, 0, AppIDS6c, 1, 2, nil)
 	sra.NewAVP(avp.SessionID, avp.Mbit, 0, datatype.UTF8String("sgd-1"))
 
 	c.HandleSRA(other, sra)
 	assert.Empty(t, ch, "answer from another connection delivered")
+	rda := diam.NewMessage(CommandRDR, 0, AppIDS6c, 1, 2, nil)
+	rda.NewAVP(avp.SessionID, avp.Mbit, 0, datatype.UTF8String("sgd-1"))
+	c.HandleRDA(hss, rda)
+	assert.Empty(t, ch, "an answer of another command delivered")
 	c.HandleSRA(hss, sra)
 	assert.Len(t, ch, 1)
+}
+
+// TestClient_RejectsIncompleteRequests: a request that would leave a
+// mandatory AVP out is answered 5005 and not sent; no peer is needed to
+// find out.
+func TestClient_RejectsIncompleteRequests(t *testing.T) {
+	url := natstest.Start(t, false)
+	nc, err := internalNats.NewClient(config.NatsConfig{URL: url})
+	require.NoError(t, err)
+	defer nc.Close()
+	cfg := &config.Config{Server: config.ServerConfig{OriginHost: "gw.example", OriginRealm: "example"}}
+	require.NoError(t, NewClient(nc, diameter.NewPeerManager(), cfg, time.Second).StartListening())
+	require.NoError(t, nc.Conn.Flush())
+	app, err := nats.Connect(url)
+	require.NoError(t, err)
+	defer app.Close()
+
+	for subject, body := range map[string]string{
+		TopicSGdSRRRequest: `{"sc_address":"905309999999"}`,
+		TopicSGdRDRRequest: `{"msisdn":"905551234567","sc_address":"905309999999","sm_delivery_outcome":{}}`,
+		TopicSGdALRRequest: `{"user_identifier":{},"sc_address":"905309999999"}`,
+		TopicSGdTFRRequest: `{"imsi":"1","sc_address":"x","sm_rp_ui":"AQ==","mme_name":"mme"}`,
+	} {
+		msg, err := app.Request(subject, []byte(body), time.Second)
+		require.NoError(t, err, subject)
+		var ans Result
+		require.NoError(t, json.Unmarshal(msg.Data, &ans))
+		assert.Equal(t, uint32(diam.MissingAVP), ans.ResultCode, "%s: %s", subject, msg.Data)
+	}
 }

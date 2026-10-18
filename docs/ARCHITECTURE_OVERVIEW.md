@@ -13,7 +13,7 @@ request moves through it.
 | `internal/diameter` | Diameter server (go-diameter state machine), peer manager, peer authorisation, per-peer rate limiter, Redirect-Host cache, dictionaries, S6a/S13 translation and the Subscription-Data encoder. |
 | `internal/service` | S6a/S13 request handling towards NATS (`gateway.go`) and application-initiated S6a and Gx requests towards peers (`reverse.go`, `gx_reverse.go`). |
 | `internal/charging` | Gx, Gy and Ro: a dispatcher that routes a CCR by Application-Id and Service-Context-Id, one handler and translator per application, and the Gx session registry (Session-Id → PCEF). |
-| `internal/sms/sgd` | SGd (SMS over Diameter): handler for network requests, client for SMSC-initiated requests. |
+| `internal/sms/sgd` | S6c and SGd (TS 29.338, SMS over Diameter): one AVP table from which the dictionary of both applications and the AVP flags are built, a handler for network requests and a client for application requests. |
 | `internal/nats` | Core NATS client with a circuit breaker and optional TLS. |
 | `internal/admin` | Admin HTTP API and the static admin UI, JWT authentication against a JWKS endpoint. |
 | `internal/config` | Configuration loading (`./configs/config.yaml`) and hot reload. |

@@ -4,376 +4,147 @@
 package sgd
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
+	pb "github.com/3eAI-Labs/diameter-ha-gateway-client"
 	"github.com/3eAI-Labs/diameter-ha-gateway/internal/diameter"
 	"github.com/3eAI-Labs/diameter-ha-gateway/internal/nats"
 	"github.com/3eAI-Labs/diameter-ha-gateway/internal/platform/logger"
 	"github.com/3eAI-Labs/diameter-ha-gateway/internal/platform/monitor"
 	"github.com/fiorix/go-diameter/v4/diam"
-	"github.com/fiorix/go-diameter/v4/diam/avp"
-	"github.com/fiorix/go-diameter/v4/diam/datatype"
 )
 
-// NATS Topics for SGd interface
+// Subjects the gateway publishes requests from the network on. S6c commands
+// share the diameter.sgd prefix with SGd.
 const (
-	TopicSGdOFR = "diameter.sgd.ofr" // MO-Forward-Short-Message
-	TopicSGdTFR = "diameter.sgd.tfr" // MT-Forward-Short-Message
-	TopicSGdSRR = "diameter.sgd.srr" // Send-Routing-Info-for-SM
-	TopicSGdALR = "diameter.sgd.alr" // Alert-Service-Centre
+	TopicSGdOFR = "diameter.sgd.ofr" // MO-Forward-Short-Message, MME/SGSN → SMS-IWMSC
+	TopicSGdTFR = "diameter.sgd.tfr" // MT-Forward-Short-Message, SMS-GMSC → MME/SGSN
+	TopicSGdSRR = "diameter.sgd.srr" // Send-Routing-Info-for-SM, SMS-GMSC → HSS
+	TopicSGdALR = "diameter.sgd.alr" // Alert-Service-Centre, HSS → SMS-IWMSC, MME/SGSN → SMS-GMSC
+	TopicSGdRDR = "diameter.sgd.rdr" // Report-SM-Delivery-Status, SMS-GMSC → HSS
 )
 
-// Handler handles SGd protocol messages (TS 29.338)
+// Handler serves S6c and SGd requests from the network: it publishes each as
+// a NATS request and answers with the application's reply.
 type Handler struct {
 	natsClient  nats.Requester
-	translator  *Translator
 	peerManager *diameter.PeerManager
 	timeout     time.Duration
 }
 
-// NewHandler creates a new SGd handler
 func NewHandler(nc nats.Requester, pm *diameter.PeerManager, timeout time.Duration) *Handler {
 	if timeout == 0 {
 		timeout = 2 * time.Second
 	}
-	return &Handler{
-		natsClient:  nc,
-		translator:  NewTranslator(),
-		peerManager: pm,
-		timeout:     timeout,
-	}
+	return &Handler{natsClient: nc, peerManager: pm, timeout: timeout}
 }
 
-// HandleOFR handles MO-Forward-Short-Message-Request (Mobile Originated SMS)
 func (h *Handler) HandleOFR(c diam.Conn, m *diam.Message) {
-	startTime := time.Now()
-	traceID := fmt.Sprintf("sgd-ofr-%d-%d", m.Header.HopByHopID, m.Header.EndToEndID)
-
-	monitor.IncrementCounter("diameter_sgd_requests_total", map[string]string{"type": "OFR"})
-
-	// Parse OFR to event
-	event, err := h.translator.ToOFREvent(m, traceID)
-	if err != nil {
-		logger.Error("SGd OFR translation failed", err, logger.String("trace_id", traceID))
-		h.sendErrorAnswer(c, m, CommandOFR, diam.InvalidAVPValue, traceID)
-		return
-	}
-
-	// Log request
-	msisdn := h.translator.FormatMSISDN(event.UserIdentifier)
-	logger.Info("SGd OFR received (MO-SMS)",
-		logger.String("trace_id", traceID),
-		logger.String("msisdn", h.translator.MaskMSISDN(msisdn)),
-		logger.String("sc_address", event.SCAddress),
-		logger.Int("pdu_length", len(event.SMRPUI)),
-	)
-
-	// The peer was registered at CER; the request's Origin-Host does not re-bind it.
-	h.peerManager.Touch(c)
-
-	// Route to NATS (SMSC)
-	respData, err := h.natsClient.Request(TopicSGdOFR, event, h.timeout)
-	if err != nil {
-		logger.Error("SGd OFR NATS request failed", err, logger.String("trace_id", traceID))
-		if nats.IsCircuitOpen(err) {
-			monitor.IncrementCounter("diameter_sgd_circuit_breaker_open", nil)
-		}
-		h.sendErrorAnswer(c, m, CommandOFR, diam.UnableToDeliver, traceID)
-		return
-	}
-
-	// Parse response
-	answer, err := h.translator.ToOFAAnswer(respData)
-	if err != nil {
-		logger.Error("SGd OFA parse failed", err, logger.String("trace_id", traceID))
-		h.sendErrorAnswer(c, m, CommandOFR, diam.UnableToDeliver, traceID)
-		return
-	}
-
-	// Build and send OFA
-	ofa, err := h.translator.ToOFAMessage(answer, m)
-	if err != nil {
-		logger.Error("SGd OFA build failed", err, logger.String("trace_id", traceID))
-		h.sendErrorAnswer(c, m, CommandOFR, diam.UnableToDeliver, traceID)
-		return
-	}
-
-	if err := diameter.SendAnswer(c, ofa, m, h.peerManager); err != nil {
-		logger.Error("SGd OFA write failed", err, logger.String("trace_id", traceID))
-		return
-	}
-
-	// Metrics
-	duration := time.Since(startTime)
-	resultStr := resultString(answer.ResultCode)
-	monitor.ObserveHistogram("diameter_sgd_request_duration_seconds", duration.Seconds(),
-		map[string]string{"type": "OFR", "result": resultStr})
-
-	logger.Info("SGd OFA sent (MO-SMS response)",
-		logger.String("trace_id", traceID),
-		logger.Int("result_code", int(answer.ResultCode)),
-		logger.String("duration", duration.String()),
-	)
+	serve(h, c, m, "OFR", TopicSGdOFR, decodeOFR, encodeOFA)
 }
 
-// HandleTFR handles MT-Forward-Short-Message-Request (Mobile Terminated SMS)
 func (h *Handler) HandleTFR(c diam.Conn, m *diam.Message) {
-	startTime := time.Now()
-	traceID := fmt.Sprintf("sgd-tfr-%d-%d", m.Header.HopByHopID, m.Header.EndToEndID)
-
-	monitor.IncrementCounter("diameter_sgd_requests_total", map[string]string{"type": "TFR"})
-
-	// Parse TFR to event
-	event, err := h.translator.ToTFREvent(m, traceID)
-	if err != nil {
-		logger.Error("SGd TFR translation failed", err, logger.String("trace_id", traceID))
-		h.sendErrorAnswer(c, m, CommandTFR, diam.InvalidAVPValue, traceID)
-		return
-	}
-
-	// Log request
-	msisdn := h.translator.FormatMSISDN(event.UserIdentifier)
-	logger.Info("SGd TFR received (MT-SMS)",
-		logger.String("trace_id", traceID),
-		logger.String("msisdn", h.translator.MaskMSISDN(msisdn)),
-		logger.String("mme_name", event.MMEName),
-		logger.String("sc_address", event.SCAddress),
-		logger.Int("pdu_length", len(event.SMRPUI)),
-	)
-
-	// The peer was registered at CER; the request's Origin-Host does not re-bind it.
-	h.peerManager.Touch(c)
-
-	// Route to NATS (MME via reverse path)
-	respData, err := h.natsClient.Request(TopicSGdTFR, event, h.timeout)
-	if err != nil {
-		logger.Error("SGd TFR NATS request failed", err, logger.String("trace_id", traceID))
-		if nats.IsCircuitOpen(err) {
-			monitor.IncrementCounter("diameter_sgd_circuit_breaker_open", nil)
-		}
-		h.sendErrorAnswer(c, m, CommandTFR, diam.UnableToDeliver, traceID)
-		return
-	}
-
-	// Parse response
-	answer, err := h.translator.ToTFAAnswer(respData)
-	if err != nil {
-		logger.Error("SGd TFA parse failed", err, logger.String("trace_id", traceID))
-		h.sendErrorAnswer(c, m, CommandTFR, diam.UnableToDeliver, traceID)
-		return
-	}
-
-	// Build and send TFA
-	tfa, err := h.translator.ToTFAMessage(answer, m)
-	if err != nil {
-		logger.Error("SGd TFA build failed", err, logger.String("trace_id", traceID))
-		h.sendErrorAnswer(c, m, CommandTFR, diam.UnableToDeliver, traceID)
-		return
-	}
-
-	if err := diameter.SendAnswer(c, tfa, m, h.peerManager); err != nil {
-		logger.Error("SGd TFA write failed", err, logger.String("trace_id", traceID))
-		return
-	}
-
-	// Metrics
-	duration := time.Since(startTime)
-	resultStr := resultString(answer.ResultCode)
-	monitor.ObserveHistogram("diameter_sgd_request_duration_seconds", duration.Seconds(),
-		map[string]string{"type": "TFR", "result": resultStr})
-
-	logger.Info("SGd TFA sent (MT-SMS response)",
-		logger.String("trace_id", traceID),
-		logger.Int("result_code", int(answer.ResultCode)),
-		logger.String("duration", duration.String()),
-	)
+	serve(h, c, m, "TFR", TopicSGdTFR, decodeTFR, encodeTFA)
 }
 
-// HandleSRR handles Send-Routing-Info-for-SM-Request
 func (h *Handler) HandleSRR(c diam.Conn, m *diam.Message) {
-	startTime := time.Now()
-	traceID := fmt.Sprintf("sgd-srr-%d-%d", m.Header.HopByHopID, m.Header.EndToEndID)
-
-	monitor.IncrementCounter("diameter_sgd_requests_total", map[string]string{"type": "SRR"})
-
-	// Parse SRR to event
-	event, err := h.translator.ToSRREvent(m, traceID)
-	if err != nil {
-		logger.Error("SGd SRR translation failed", err, logger.String("trace_id", traceID))
-		h.sendErrorAnswer(c, m, CommandSRR, diam.InvalidAVPValue, traceID)
-		return
-	}
-
-	// Log request
-	msisdn := h.translator.FormatMSISDNBytes(event.MSISDN)
-	logger.Info("SGd SRR received (Routing Info)",
-		logger.String("trace_id", traceID),
-		logger.String("msisdn", h.translator.MaskMSISDN(msisdn)),
-		logger.String("sc_address", event.SCAddress),
-	)
-
-	// The peer was registered at CER; the request's Origin-Host does not re-bind it.
-	h.peerManager.Touch(c)
-
-	// Route to NATS (HSS/HLR)
-	respData, err := h.natsClient.Request(TopicSGdSRR, event, h.timeout)
-	if err != nil {
-		logger.Error("SGd SRR NATS request failed", err, logger.String("trace_id", traceID))
-		if nats.IsCircuitOpen(err) {
-			monitor.IncrementCounter("diameter_sgd_circuit_breaker_open", nil)
-		}
-		h.sendErrorAnswer(c, m, CommandSRR, diam.UnableToDeliver, traceID)
-		return
-	}
-
-	// Parse response
-	answer, err := h.translator.ToSRAAnswer(respData)
-	if err != nil {
-		logger.Error("SGd SRA parse failed", err, logger.String("trace_id", traceID))
-		h.sendErrorAnswer(c, m, CommandSRR, diam.UnableToDeliver, traceID)
-		return
-	}
-
-	// Build and send SRA
-	sra, err := h.translator.ToSRAMessage(answer, m)
-	if err != nil {
-		logger.Error("SGd SRA build failed", err, logger.String("trace_id", traceID))
-		h.sendErrorAnswer(c, m, CommandSRR, diam.UnableToDeliver, traceID)
-		return
-	}
-
-	if err := diameter.SendAnswer(c, sra, m, h.peerManager); err != nil {
-		logger.Error("SGd SRA write failed", err, logger.String("trace_id", traceID))
-		return
-	}
-
-	// Metrics
-	duration := time.Since(startTime)
-	resultStr := resultString(answer.ResultCode)
-	monitor.ObserveHistogram("diameter_sgd_request_duration_seconds", duration.Seconds(),
-		map[string]string{"type": "SRR", "result": resultStr})
-
-	logger.Info("SGd SRA sent (Routing Info response)",
-		logger.String("trace_id", traceID),
-		logger.Int("result_code", int(answer.ResultCode)),
-		logger.String("mme_name", answer.MMEName),
-		logger.String("duration", duration.String()),
-	)
+	serve(h, c, m, "SRR", TopicSGdSRR, decodeSRR, encodeSRA)
 }
 
-// HandleALR handles Alert-Service-Centre-Request
 func (h *Handler) HandleALR(c diam.Conn, m *diam.Message) {
-	startTime := time.Now()
-	traceID := fmt.Sprintf("sgd-alr-%d-%d", m.Header.HopByHopID, m.Header.EndToEndID)
+	serve(h, c, m, "ALR", TopicSGdALR, decodeALR, encodeALA)
+}
 
-	monitor.IncrementCounter("diameter_sgd_requests_total", map[string]string{"type": "ALR"})
+func (h *Handler) HandleRDR(c diam.Conn, m *diam.Message) {
+	serve(h, c, m, "RDR", TopicSGdRDR, decodeRDR, encodeRDA)
+}
 
-	// Parse ALR to event
-	event, err := h.translator.ToALREvent(m, traceID)
-	if err != nil {
-		logger.Error("SGd ALR translation failed", err, logger.String("trace_id", traceID))
-		h.sendErrorAnswer(c, m, CommandALR, diam.InvalidAVPValue, traceID)
+// serve answers m:
+//   - 5005 with a Failed-AVP when a mandatory AVP of the command is missing;
+//   - 3002 when no application answers on subject in time;
+//   - 5012 when the application's reply is not valid JSON;
+//   - otherwise with the application's reply.
+func serve[E, A any](h *Handler, c diam.Conn, m *diam.Message, cmd, subject string,
+	decode func(*diam.Message, string) *E, encode func(*diam.Message, *A) *diam.Message) {
+	traceID := fmt.Sprintf("sgd-%s-%d-%d", strings.ToLower(cmd), m.Header.HopByHopID, m.Header.EndToEndID)
+	monitor.IncrementCounter("diameter_sgd_requests_total", map[string]string{"type": cmd})
+	h.peerManager.Touch(c)
+
+	if missing := missingAVPs(m, cmd); len(missing) > 0 {
+		host, realm := h.peerManager.Identity()
+		h.send(c, diameter.BuildMissingAVPAnswer(m, host, realm, missing), m, cmd, traceID)
 		return
 	}
 
-	// Log request
-	msisdn := h.translator.FormatMSISDN(event.UserIdentifier)
-	logger.Info("SGd ALR received (Alert SC)",
-		logger.String("trace_id", traceID),
-		logger.String("msisdn", h.translator.MaskMSISDN(msisdn)),
-		logger.String("sc_address", event.SCAddress),
-	)
-
-	// The peer was registered at CER; the request's Origin-Host does not re-bind it.
-	h.peerManager.Touch(c)
-
-	// Route to NATS (SMSC)
-	respData, err := h.natsClient.Request(TopicSGdALR, event, h.timeout)
+	data, err := h.natsClient.Request(subject, decode(m, traceID), h.timeout)
 	if err != nil {
-		logger.Error("SGd ALR NATS request failed", err, logger.String("trace_id", traceID))
+		logger.Warn("SGd: no application reply",
+			logger.String("cmd", cmd), logger.String("trace_id", traceID), logger.String("err", err.Error()))
 		if nats.IsCircuitOpen(err) {
 			monitor.IncrementCounter("diameter_sgd_circuit_breaker_open", nil)
 		}
-		h.sendErrorAnswer(c, m, CommandALR, diam.UnableToDeliver, traceID)
+		h.send(c, m.Answer(diam.UnableToDeliver), m, cmd, traceID)
 		return
 	}
-
-	// Parse response
-	answer, err := h.translator.ToALAAnswer(respData)
-	if err != nil {
-		logger.Error("SGd ALA parse failed", err, logger.String("trace_id", traceID))
-		h.sendErrorAnswer(c, m, CommandALR, diam.UnableToDeliver, traceID)
+	var reply A
+	if err := json.Unmarshal(data, &reply); err != nil {
+		logger.Warn("SGd: application reply is not valid JSON",
+			logger.String("cmd", cmd), logger.String("trace_id", traceID))
+		h.send(c, m.Answer(diam.UnableToComply), m, cmd, traceID)
 		return
 	}
-
-	// Build and send ALA
-	ala, err := h.translator.ToALAMessage(answer, m)
-	if err != nil {
-		logger.Error("SGd ALA build failed", err, logger.String("trace_id", traceID))
-		h.sendErrorAnswer(c, m, CommandALR, diam.UnableToDeliver, traceID)
-		return
-	}
-
-	if err := diameter.SendAnswer(c, ala, m, h.peerManager); err != nil {
-		logger.Error("SGd ALA write failed", err, logger.String("trace_id", traceID))
-		return
-	}
-
-	// Metrics
-	duration := time.Since(startTime)
-	resultStr := resultString(answer.ResultCode)
-	monitor.ObserveHistogram("diameter_sgd_request_duration_seconds", duration.Seconds(),
-		map[string]string{"type": "ALR", "result": resultStr})
-
-	logger.Info("SGd ALA sent (Alert SC response)",
-		logger.String("trace_id", traceID),
-		logger.Int("result_code", int(answer.ResultCode)),
-		logger.String("duration", duration.String()),
-	)
+	h.send(c, encode(m, &reply), m, cmd, traceID)
 }
 
-// sendErrorAnswer sends an error answer for the given command
-func (h *Handler) sendErrorAnswer(c diam.Conn, req *diam.Message, cmdCode, resultCode uint32, traceID string) {
-	ans := req.Answer(resultCode)
-
-	// Add Vendor-Specific-Application-Id
-	vsaiAVP := diam.NewAVP(avp.VendorSpecificApplicationID, avp.Mbit, 0, &diam.GroupedAVP{
-		AVP: []*diam.AVP{
-			diam.NewAVP(avp.VendorID, avp.Mbit, 0, datatype.Unsigned32(VendorID3GPP)),
-			diam.NewAVP(avp.AuthApplicationID, avp.Mbit, 0, datatype.Unsigned32(AppIDSGd)),
-		},
-	})
-	ans.AVP = append(ans.AVP, vsaiAVP)
-
+func (h *Handler) send(c diam.Conn, ans, req *diam.Message, cmd, traceID string) {
 	if err := diameter.SendAnswer(c, ans, req, h.peerManager); err != nil {
-		logger.Error("SGd error answer write failed", err, logger.String("trace_id", traceID))
+		logger.Error("SGd answer write failed", err, logger.String("cmd", cmd), logger.String("trace_id", traceID))
 	}
-
-	cmdName := commandName(cmdCode)
-	monitor.IncrementCounter("diameter_sgd_errors_total",
-		map[string]string{"command": cmdName, "result_code": fmt.Sprintf("%d", resultCode)})
 }
 
-// Helper functions
-func resultString(code uint32) string {
-	if code == diam.Success || code == DiameterSuccessSGd {
-		return "success"
-	}
-	return fmt.Sprintf("%d", code)
+// required is what every S6c and SGd request carries ({…} in each Command
+// Code Format); commands adds each command's own.
+var required = []string{"Session-Id", "Auth-Session-State", "Origin-Host", "Origin-Realm", "Destination-Realm"}
+
+// mandatoryAVP locates an AVP by name, with the minimum length of its value
+// for the zero-valued example a Failed-AVP carries (RFC 6733 §7.5).
+var mandatoryAVP = map[string]struct {
+	code, vendor uint32
+	size         int
+}{
+	"Session-Id":          {263, 0, 0},
+	"Auth-Session-State":  {277, 0, 4},
+	"Origin-Host":         {264, 0, 0},
+	"Origin-Realm":        {296, 0, 0},
+	"Destination-Realm":   {283, 0, 0},
+	"Destination-Host":    {avpDestinationHost, 0, 0},
+	"User-Name":           {avpUserName, 0, 0},
+	"SC-Address":          {avpSCAddress, VendorID3GPP, 0},
+	"User-Identifier":     {avpUserIdentifier, VendorID3GPP, 0},
+	"SM-RP-UI":            {avpSMRPUI, VendorID3GPP, 0},
+	"SM-Delivery-Outcome": {avpSMDeliveryOutcome, VendorID3GPP, 0},
 }
 
-func commandName(code uint32) string {
-	switch code {
-	case CommandOFR:
-		return "OFR"
-	case CommandTFR:
-		return "TFR"
-	case CommandSRR:
-		return "SRR"
-	case CommandALR:
-		return "ALR"
-	default:
-		return "UNKNOWN"
+var commandByName = func() map[string]command {
+	out := make(map[string]command, len(commands))
+	for _, c := range commands {
+		out[strings.ToUpper(c.short)+"R"] = c
 	}
+	return out
+}()
+
+func missingAVPs(m *diam.Message, cmd string) []pb.FailedAVPEntry {
+	var missing []pb.FailedAVPEntry
+	for _, name := range append(append([]string{}, required...), commandByName[cmd].required...) {
+		want := mandatoryAVP[name]
+		if avpList(m.AVP).find(want.code, want.vendor) == nil {
+			missing = append(missing, pb.FailedAVPEntry{
+				Code: want.code, VendorID: want.vendor, Value: strings.Repeat("00", want.size),
+			})
+		}
+	}
+	return missing
 }

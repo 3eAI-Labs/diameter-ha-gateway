@@ -4,638 +4,291 @@
 package sgd
 
 import (
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
-	"time"
-
-	"github.com/3eAI-Labs/diameter-ha-gateway/internal/charging"
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/avp"
 	"github.com/fiorix/go-diameter/v4/diam/datatype"
+	"github.com/fiorix/go-diameter/v4/diam/dict"
 )
 
-// Translator handles Diameter AVP <-> JSON conversion for SGd
-type Translator struct{}
-
-// NewTranslator creates a new SGd translator
-func NewTranslator() *Translator {
-	return &Translator{}
-}
-
-// =============================================================================
-// OFR (MO-Forward-Short-Message) Translation
-// =============================================================================
-
-// ToOFREvent converts a Diameter OFR message to OFREvent
-func (t *Translator) ToOFREvent(m *diam.Message, traceID string) (*OFREvent, error) {
-	event := &OFREvent{
-		Header: t.extractHeader(m, traceID),
-	}
-
-	// Extract User-Identifier (grouped AVP)
-	if userIdAVP := t.findAVP(m.AVP, AVPUserIdentifierValue, VendorID3GPP); userIdAVP != nil {
-		event.UserIdentifier = t.parseUserIdentifier(userIdAVP)
-	}
-
-	// Extract SM-RP-UI (SMS PDU)
-	if smrpuiAVP := t.findAVP(m.AVP, AVPSMRPUICode, VendorID3GPP); smrpuiAVP != nil {
-		event.SMRPUI = []byte(smrpuiAVP.Data.(datatype.OctetString))
-	}
-
-	// Extract SC-Address
-	if scAddrAVP := t.findAVP(m.AVP, AVPServiceCentreAddress, VendorID3GPP); scAddrAVP != nil {
-		event.SCAddress = t.formatAddress([]byte(scAddrAVP.Data.(datatype.OctetString)))
-	}
-
-	// Extract SMS-GMSC-Address
-	if gmscAVP := t.findAVP(m.AVP, AVPSMSGMSCAddress, VendorID3GPP); gmscAVP != nil {
-		event.SMSGMSCAddress = t.formatAddress([]byte(gmscAVP.Data.(datatype.OctetString)))
-	}
-
-	// Extract SMSMI-Correlation-ID
-	if corrAVP := t.findAVP(m.AVP, AVPSMSMICorrelationID, VendorID3GPP); corrAVP != nil {
-		event.SMSMICorrelationID = t.parseSMSMICorrelationID(corrAVP)
-	}
-
-	return event, nil
-}
-
-// ToOFAAnswer parses NATS response to OFAAnswer
-func (t *Translator) ToOFAAnswer(data []byte) (*OFAAnswer, error) {
-	var answer OFAAnswer
-	if err := json.Unmarshal(data, &answer); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal OFA answer: %w", err)
-	}
-	return &answer, nil
-}
-
-// ToOFAMessage builds a Diameter OFA message from OFAAnswer
-func (t *Translator) ToOFAMessage(answer *OFAAnswer, req *diam.Message) (*diam.Message, error) {
-	ans := req.Answer(answer.ResultCode)
-
-	// Vendor-Specific-Application-Id
-	t.addVSAI(ans)
-
-	// Experimental-Result if present
-	if answer.ExperimentalResult != nil {
-		t.addExperimentalResult(ans, answer.ExperimentalResult)
-	}
-
-	return ans, nil
-}
-
-// =============================================================================
-// TFR (MT-Forward-Short-Message) Translation
-// =============================================================================
-
-// ToTFREvent converts a Diameter TFR message to TFREvent
-func (t *Translator) ToTFREvent(m *diam.Message, traceID string) (*TFREvent, error) {
-	event := &TFREvent{
-		Header: t.extractHeader(m, traceID),
-	}
-
-	// Extract User-Identifier
-	if userIdAVP := t.findAVP(m.AVP, AVPUserIdentifierValue, VendorID3GPP); userIdAVP != nil {
-		event.UserIdentifier = t.parseUserIdentifier(userIdAVP)
-	}
-
-	// Extract SM-RP-UI (SMS PDU)
-	if smrpuiAVP := t.findAVP(m.AVP, AVPSMRPUICode, VendorID3GPP); smrpuiAVP != nil {
-		event.SMRPUI = []byte(smrpuiAVP.Data.(datatype.OctetString))
-	}
-
-	// Extract SM-RP-MTI
-	if mtiAVP := t.findAVP(m.AVP, AVPSMRPMTI, VendorID3GPP); mtiAVP != nil {
-		event.SMRPMTI = uint32(mtiAVP.Data.(datatype.Enumerated))
-	}
-
-	// Extract SM-RP-SMEA
-	if smeaAVP := t.findAVP(m.AVP, AVPSMRPSMEA, VendorID3GPP); smeaAVP != nil {
-		event.SMRPSMEA = []byte(smeaAVP.Data.(datatype.OctetString))
-	}
-
-	// Extract MME fields
-	if mmeName := t.findAVP(m.AVP, AVPMMEName, VendorID3GPP); mmeName != nil {
-		event.MMEName = string(mmeName.Data.(datatype.DiameterIdentity))
-	}
-	if mmeRealm := t.findAVP(m.AVP, AVPMMERealm, VendorID3GPP); mmeRealm != nil {
-		event.MMERealm = string(mmeRealm.Data.(datatype.DiameterIdentity))
-	}
-	if mmeNum := t.findAVP(m.AVP, AVPMMENumberForMTSMS, VendorID3GPP); mmeNum != nil {
-		event.MMENumberForMTSMS = []byte(mmeNum.Data.(datatype.OctetString))
-	}
-
-	// Extract SGSN fields
-	if sgsnNum := t.findAVP(m.AVP, AVPSGSNNumber, VendorID3GPP); sgsnNum != nil {
-		event.SGSNNumber = []byte(sgsnNum.Data.(datatype.OctetString))
-	}
-	if sgsnName := t.findAVP(m.AVP, AVPSGSNName, VendorID3GPP); sgsnName != nil {
-		event.SGSNName = string(sgsnName.Data.(datatype.DiameterIdentity))
-	}
-	if sgsnRealm := t.findAVP(m.AVP, AVPSGSNRealm, VendorID3GPP); sgsnRealm != nil {
-		event.SGSNRealm = string(sgsnRealm.Data.(datatype.DiameterIdentity))
-	}
-
-	// Extract SC-Address
-	if scAddrAVP := t.findAVP(m.AVP, AVPServiceCentreAddress, VendorID3GPP); scAddrAVP != nil {
-		event.SCAddress = t.formatAddress([]byte(scAddrAVP.Data.(datatype.OctetString)))
-	}
-
-	// Extract SM-Delivery-Timer
-	if timerAVP := t.findAVP(m.AVP, AVPSMDeliveryTimer, VendorID3GPP); timerAVP != nil {
-		event.SMDeliveryTimer = uint32(timerAVP.Data.(datatype.Unsigned32))
-	}
-
-	// Extract SM-Delivery-Start-Time
-	if startAVP := t.findAVP(m.AVP, AVPSMDeliveryStartTime, VendorID3GPP); startAVP != nil {
-		event.SMDeliveryStartTime = t.extractTime(startAVP)
-	}
-
-	// Extract Maximum-Retransmissions
-	if maxRetryAVP := t.findAVP(m.AVP, AVPMaximumRetransmissions, VendorID3GPP); maxRetryAVP != nil {
-		event.MaxRetransmissions = uint32(maxRetryAVP.Data.(datatype.Unsigned32))
-	}
-
-	// Extract SMSMI-Correlation-ID
-	if corrAVP := t.findAVP(m.AVP, AVPSMSMICorrelationID, VendorID3GPP); corrAVP != nil {
-		event.SMSMICorrelationID = t.parseSMSMICorrelationID(corrAVP)
-	}
-
-	return event, nil
-}
-
-// ToTFAAnswer parses NATS response to TFAAnswer
-func (t *Translator) ToTFAAnswer(data []byte) (*TFAAnswer, error) {
-	var answer TFAAnswer
-	if err := json.Unmarshal(data, &answer); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal TFA answer: %w", err)
-	}
-	return &answer, nil
-}
-
-// ToTFAMessage builds a Diameter TFA message from TFAAnswer
-func (t *Translator) ToTFAMessage(answer *TFAAnswer, req *diam.Message) (*diam.Message, error) {
-	ans := req.Answer(answer.ResultCode)
-
-	// Vendor-Specific-Application-Id
-	t.addVSAI(ans)
-
-	// Experimental-Result if present
-	if answer.ExperimentalResult != nil {
-		t.addExperimentalResult(ans, answer.ExperimentalResult)
-	}
-
-	// SM-Delivery-Outcome
-	if answer.SMDeliveryOutcome != nil {
-		t.addSMDeliveryOutcome(ans, answer.SMDeliveryOutcome)
-	}
-
-	// Absent-User-Diagnostic-SM
-	if answer.AbsentUserDiagnosticSM > 0 {
-		ans.NewAVP(AVPAbsentUserDiagnosticSM, avp.Mbit|avp.Vbit, VendorID3GPP,
-			datatype.Unsigned32(answer.AbsentUserDiagnosticSM))
-	}
-
-	return ans, nil
-}
-
-// =============================================================================
-// SRR (Send-Routing-Info-for-SM) Translation
-// =============================================================================
-
-// ToSRREvent converts a Diameter SRR message to SRREvent
-func (t *Translator) ToSRREvent(m *diam.Message, traceID string) (*SRREvent, error) {
-	event := &SRREvent{
-		Header: t.extractHeader(m, traceID),
-	}
-
-	// Extract User-Identifier
-	if userIdAVP := t.findAVP(m.AVP, AVPUserIdentifierValue, VendorID3GPP); userIdAVP != nil {
-		event.UserIdentifier = t.parseUserIdentifier(userIdAVP)
-	}
-
-	// Extract MSISDN (standalone)
-	if msisdnAVP := t.findAVP(m.AVP, AVPMSISDN, VendorID3GPP); msisdnAVP != nil {
-		event.MSISDN = []byte(msisdnAVP.Data.(datatype.OctetString))
-	}
-
-	// Extract SC-Address
-	if scAddrAVP := t.findAVP(m.AVP, AVPServiceCentreAddress, VendorID3GPP); scAddrAVP != nil {
-		event.SCAddress = t.formatAddress([]byte(scAddrAVP.Data.(datatype.OctetString)))
-	}
-
-	// Extract SM-RP-PRI (Priority)
-	if priAVP := t.findAVP(m.AVP, 3318, VendorID3GPP); priAVP != nil { // SM-RP-PRI AVP code
-		event.SMRPPri = uint32(priAVP.Data.(datatype.Enumerated))
-	}
-
-	// Extract SRR-Flags
-	if flagsAVP := t.findAVP(m.AVP, AVPSRRFlags, VendorID3GPP); flagsAVP != nil {
-		event.SRRFlags = uint32(flagsAVP.Data.(datatype.Unsigned32))
-	}
-
-	// Extract SM-Delivery-Not-Intended
-	if notIntendedAVP := t.findAVP(m.AVP, AVPSMDeliveryNotIntended, VendorID3GPP); notIntendedAVP != nil {
-		event.SMDeliveryNotIntended = uint32(notIntendedAVP.Data.(datatype.Enumerated))
-	}
-
-	return event, nil
-}
-
-// ToSRAAnswer parses NATS response to SRAAnswer
-func (t *Translator) ToSRAAnswer(data []byte) (*SRAAnswer, error) {
-	var answer SRAAnswer
-	if err := json.Unmarshal(data, &answer); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal SRA answer: %w", err)
-	}
-	return &answer, nil
-}
-
-// ToSRAMessage builds a Diameter SRA message from SRAAnswer
-func (t *Translator) ToSRAMessage(answer *SRAAnswer, req *diam.Message) (*diam.Message, error) {
-	ans := req.Answer(answer.ResultCode)
-
-	// Vendor-Specific-Application-Id
-	t.addVSAI(ans)
-
-	// Experimental-Result if present
-	if answer.ExperimentalResult != nil {
-		t.addExperimentalResult(ans, answer.ExperimentalResult)
-	}
-
-	// User-Name (IMSI)
-	if answer.UserName != "" {
-		ans.NewAVP(avp.UserName, avp.Mbit, 0, datatype.UTF8String(answer.UserName))
-	}
-
-	// LMSI
-	if len(answer.LMSI) > 0 {
-		ans.NewAVP(AVPLMSI, avp.Mbit|avp.Vbit, VendorID3GPP, datatype.OctetString(answer.LMSI))
-	}
-
-	// Serving-Node(s)
-	for _, sn := range answer.ServingNode {
-		t.addServingNode(ans, &sn)
-	}
-
-	// Additional-Serving-Node(s)
-	for _, sn := range answer.AdditionalServingNode {
-		t.addServingNode(ans, &sn)
-	}
-
-	// MME fields (if not in Serving-Node)
-	if answer.MMEName != "" {
-		ans.NewAVP(AVPMMEName, avp.Mbit|avp.Vbit, VendorID3GPP, datatype.DiameterIdentity(answer.MMEName))
-	}
-	if answer.MMERealm != "" {
-		ans.NewAVP(AVPMMERealm, avp.Mbit|avp.Vbit, VendorID3GPP, datatype.DiameterIdentity(answer.MMERealm))
-	}
-	if len(answer.MMENumberForMTSMS) > 0 {
-		ans.NewAVP(AVPMMENumberForMTSMS, avp.Mbit|avp.Vbit, VendorID3GPP, datatype.OctetString(answer.MMENumberForMTSMS))
-	}
-
-	// SGSN fields
-	if len(answer.SGSNNumber) > 0 {
-		ans.NewAVP(AVPSGSNNumber, avp.Mbit|avp.Vbit, VendorID3GPP, datatype.OctetString(answer.SGSNNumber))
-	}
-	if answer.SGSNName != "" {
-		ans.NewAVP(AVPSGSNName, avp.Mbit|avp.Vbit, VendorID3GPP, datatype.DiameterIdentity(answer.SGSNName))
-	}
-	if answer.SGSNRealm != "" {
-		ans.NewAVP(AVPSGSNRealm, avp.Mbit|avp.Vbit, VendorID3GPP, datatype.DiameterIdentity(answer.SGSNRealm))
-	}
-
-	// MSC fields
-	if len(answer.MSCNumber) > 0 {
-		ans.NewAVP(AVPMSCNumber, avp.Mbit|avp.Vbit, VendorID3GPP, datatype.OctetString(answer.MSCNumber))
-	}
-	if answer.ThreeGPPSMSCAddress != "" {
-		ans.NewAVP(AVPThreeGPPSMSCAddress, avp.Mbit|avp.Vbit, VendorID3GPP,
-			datatype.OctetString(answer.ThreeGPPSMSCAddress))
-	}
-
-	// MWD-Status
-	if answer.MWDStatus > 0 {
-		ans.NewAVP(AVPMWDStatus, avp.Mbit|avp.Vbit, VendorID3GPP, datatype.Unsigned32(answer.MWDStatus))
-	}
-
-	return ans, nil
-}
-
-// =============================================================================
-// ALR (Alert-Service-Centre) Translation
-// =============================================================================
-
-// ToALREvent converts a Diameter ALR message to ALREvent
-func (t *Translator) ToALREvent(m *diam.Message, traceID string) (*ALREvent, error) {
-	event := &ALREvent{
-		Header: t.extractHeader(m, traceID),
-	}
-
-	// Extract User-Identifier
-	if userIdAVP := t.findAVP(m.AVP, AVPUserIdentifierValue, VendorID3GPP); userIdAVP != nil {
-		event.UserIdentifier = t.parseUserIdentifier(userIdAVP)
-	}
-
-	// Extract SC-Address
-	if scAddrAVP := t.findAVP(m.AVP, AVPServiceCentreAddress, VendorID3GPP); scAddrAVP != nil {
-		event.SCAddress = t.formatAddress([]byte(scAddrAVP.Data.(datatype.OctetString)))
-	}
-
-	// Extract SMS-GMSC-Alert-Event
-	if alertAVP := t.findAVP(m.AVP, AVPSMSGMSCAlertEvent, VendorID3GPP); alertAVP != nil {
-		event.SMSGMSCAlertEvent = uint32(alertAVP.Data.(datatype.Enumerated))
-	}
-
-	// Extract Serving-Node
-	if snAVP := t.findAVP(m.AVP, AVPServingNode, VendorID3GPP); snAVP != nil {
-		event.ServingNode = t.parseServingNode(snAVP)
-	}
-
-	return event, nil
-}
-
-// ToALAAnswer parses NATS response to ALAAnswer
-func (t *Translator) ToALAAnswer(data []byte) (*ALAAnswer, error) {
-	var answer ALAAnswer
-	if err := json.Unmarshal(data, &answer); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal ALA answer: %w", err)
-	}
-	return &answer, nil
-}
-
-// ToALAMessage builds a Diameter ALA message from ALAAnswer
-func (t *Translator) ToALAMessage(answer *ALAAnswer, req *diam.Message) (*diam.Message, error) {
-	ans := req.Answer(answer.ResultCode)
-
-	// Vendor-Specific-Application-Id
-	t.addVSAI(ans)
-
-	// Experimental-Result if present
-	if answer.ExperimentalResult != nil {
-		t.addExperimentalResult(ans, answer.ExperimentalResult)
-	}
-
-	return ans, nil
-}
-
-// =============================================================================
-// Helper Methods
-// =============================================================================
-
-func (t *Translator) extractHeader(m *diam.Message, traceID string) charging.DiameterHeader {
-	header := charging.DiameterHeader{
-		HopByHop:          m.Header.HopByHopID,
-		EndToEnd:          m.Header.EndToEndID,
-		AuthApplicationID: AppIDSGd,
-		TraceID:           traceID,
-		Timestamp:         time.Now(),
-	}
-
-	if sessionID, err := m.FindAVP(avp.SessionID, 0); err == nil {
-		header.SessionID = string(sessionID.Data.(datatype.UTF8String))
-	}
-	if originHost, err := m.FindAVP(avp.OriginHost, 0); err == nil {
-		header.OriginHost = string(originHost.Data.(datatype.DiameterIdentity))
-	}
-	if originRealm, err := m.FindAVP(avp.OriginRealm, 0); err == nil {
-		header.OriginRealm = string(originRealm.Data.(datatype.DiameterIdentity))
-	}
-	if destHost, err := m.FindAVP(avp.DestinationHost, 0); err == nil {
-		header.DestinationHost = string(destHost.Data.(datatype.DiameterIdentity))
-	}
-	if destRealm, err := m.FindAVP(avp.DestinationRealm, 0); err == nil {
-		header.DestinationRealm = string(destRealm.Data.(datatype.DiameterIdentity))
-	}
-
-	return header
-}
-
-func (t *Translator) extractTime(a *diam.AVP) int64 {
-	if dt, ok := a.Data.(datatype.Time); ok {
-		return time.Time(dt).Unix()
-	}
-	return 0
-}
-
-func (t *Translator) findAVP(avps []*diam.AVP, code, vendorID uint32) *diam.AVP {
-	for _, a := range avps {
-		if a.Code == code && a.VendorID == vendorID {
-			return a
-		}
-		// Also check with vendorID 0 for non-vendor-specific AVPs
-		if vendorID == 0 && a.Code == code {
-			return a
-		}
-	}
-	return nil
-}
-
-func (t *Translator) parseUserIdentifier(avpData *diam.AVP) *UserIdentifier {
-	grouped, ok := avpData.Data.(*diam.GroupedAVP)
-	if !ok {
-		return nil
-	}
-
-	ui := &UserIdentifier{}
-	for _, a := range grouped.AVP {
-		switch a.Code {
-		case AVPMSISDN:
-			ui.MSISDN = []byte(a.Data.(datatype.OctetString))
-		case AVPUserName:
-			ui.UserName = string(a.Data.(datatype.UTF8String))
-		case AVPExternalIdentifier:
-			ui.ExternalIdentifier = string(a.Data.(datatype.UTF8String))
-		case AVPLMSI:
-			ui.LMSI = []byte(a.Data.(datatype.OctetString))
-		}
-	}
-	return ui
-}
-
-func (t *Translator) parseSMSMICorrelationID(avpData *diam.AVP) *SMSMICorrelationID {
-	grouped, ok := avpData.Data.(*diam.GroupedAVP)
-	if !ok {
-		return nil
-	}
-
-	corr := &SMSMICorrelationID{}
-	for _, a := range grouped.AVP {
-		switch a.Code {
-		case AVPHSSID:
-			corr.HSSID = string(a.Data.(datatype.DiameterIdentity))
-		case AVPOriginatorSCCPAddress:
-			corr.OriginatorSCCPAddress = []byte(a.Data.(datatype.OctetString))
-		}
-	}
-	return corr
-}
-
-func (t *Translator) parseServingNode(avpData *diam.AVP) *ServingNode {
-	grouped, ok := avpData.Data.(*diam.GroupedAVP)
-	if !ok {
-		return nil
-	}
-
-	sn := &ServingNode{}
-	for _, a := range grouped.AVP {
-		switch a.Code {
-		case AVPSGSNNumber:
-			sn.SGSNNumber = []byte(a.Data.(datatype.OctetString))
-		case AVPSGSNName:
-			sn.SGSNName = string(a.Data.(datatype.DiameterIdentity))
-		case AVPSGSNRealm:
-			sn.SGSNRealm = string(a.Data.(datatype.DiameterIdentity))
-		case AVPMMEName:
-			sn.MMEName = string(a.Data.(datatype.DiameterIdentity))
-		case AVPMMERealm:
-			sn.MMERealm = string(a.Data.(datatype.DiameterIdentity))
-		case AVPMMENumberForMTSMS:
-			sn.MMENumberForMTSMS = []byte(a.Data.(datatype.OctetString))
-		case AVPMSCNumber:
-			sn.MSCNumber = []byte(a.Data.(datatype.OctetString))
-		case AVPThreeGPPSMSCAddress:
-			sn.ThreeGPPSMSCAddress = string(a.Data.(datatype.OctetString))
-		}
-	}
-	return sn
-}
-
-func (t *Translator) addVSAI(msg *diam.Message) {
-	vsaiAVP := diam.NewAVP(avp.VendorSpecificApplicationID, avp.Mbit, 0, &diam.GroupedAVP{
-		AVP: []*diam.AVP{
-			diam.NewAVP(avp.VendorID, avp.Mbit, 0, datatype.Unsigned32(VendorID3GPP)),
-			diam.NewAVP(avp.AuthApplicationID, avp.Mbit, 0, datatype.Unsigned32(AppIDSGd)),
-		},
-	})
-	msg.AVP = append(msg.AVP, vsaiAVP)
-}
-
-func (t *Translator) addExperimentalResult(msg *diam.Message, er *ExperimentalResult) {
-	erAVP := diam.NewAVP(avp.ExperimentalResult, avp.Mbit, 0, &diam.GroupedAVP{
-		AVP: []*diam.AVP{
-			diam.NewAVP(avp.VendorID, avp.Mbit, 0, datatype.Unsigned32(er.VendorID)),
-			diam.NewAVP(avp.ExperimentalResultCode, avp.Mbit, 0, datatype.Unsigned32(er.ExperimentalResultCode)),
-		},
-	})
-	msg.AVP = append(msg.AVP, erAVP)
-}
-
-func (t *Translator) addSMDeliveryOutcome(msg *diam.Message, outcome *SMDeliveryOutcome) {
-	avps := []*diam.AVP{}
-
-	if outcome.MMEAbsentUserDiagnosticSM > 0 {
-		avps = append(avps, diam.NewAVP(3313, avp.Mbit|avp.Vbit, VendorID3GPP, // MME-Absent-User-Diagnostic-SM
-			datatype.Unsigned32(outcome.MMEAbsentUserDiagnosticSM)))
-	}
-	if outcome.MSCAbsentUserDiagnosticSM > 0 {
-		avps = append(avps, diam.NewAVP(3314, avp.Mbit|avp.Vbit, VendorID3GPP, // MSC-Absent-User-Diagnostic-SM
-			datatype.Unsigned32(outcome.MSCAbsentUserDiagnosticSM)))
-	}
-	if outcome.SGSNAbsentUserDiagnosticSM > 0 {
-		avps = append(avps, diam.NewAVP(3315, avp.Mbit|avp.Vbit, VendorID3GPP, // SGSN-Absent-User-Diagnostic-SM
-			datatype.Unsigned32(outcome.SGSNAbsentUserDiagnosticSM)))
-	}
-	if outcome.SMDeliveryCause > 0 {
-		avps = append(avps, diam.NewAVP(3321, avp.Mbit|avp.Vbit, VendorID3GPP, // SM-Delivery-Cause
-			datatype.Enumerated(outcome.SMDeliveryCause)))
-	}
-
-	if len(avps) > 0 {
-		smOutcomeAVP := diam.NewAVP(AVPSMDeliveryOutcome, avp.Mbit|avp.Vbit, VendorID3GPP, &diam.GroupedAVP{
-			AVP: avps,
-		})
-		msg.AVP = append(msg.AVP, smOutcomeAVP)
+// Each command is translated in four places: a request from the network to
+// its event, the application's reply to the answer; and, for the requests
+// applications send, the application's request to the Diameter request and
+// the peer's answer to the reply. Every field follows the command's Command
+// Code Format in TS 29.338 §5.3.2 (S6c) or §6.3.2 (SGd); the Vendor-Specific-
+// Application-Id is neither read nor sent (§5.3.2.2: "shall not be included").
+
+var (
+	wS6c = writer{app: AppIDS6c}
+	wSGd = writer{app: AppIDSGd}
+)
+
+// ─── OFR / OFA (SGd, network → application) ──────────────────────────────
+
+func decodeOFR(m *diam.Message, traceID string) *OFREvent {
+	l := avpList(m.AVP)
+	return &OFREvent{
+		Header:             header(m, traceID),
+		SCAddress:          tbcdOf(l.get(avpSCAddress)),
+		OFRFlags:           u32Of(l.get(avpOFRFlags)),
+		SupportedFeatures:  readSupportedFeatures(l),
+		UserIdentifier:     readUserIdentifier(l.get(avpUserIdentifier)),
+		SMRPUI:             asBytes(l.get(avpSMRPUI)),
+		SMSMICorrelationID: readSMSMICorrelationID(l.get(avpSMSMICorrelationID)),
+		SMDeliveryOutcome:  readSMDeliveryOutcome(l.get(avpSMDeliveryOutcome)),
 	}
 }
 
-func (t *Translator) addServingNode(msg *diam.Message, sn *ServingNode) {
-	avps := []*diam.AVP{}
+func encodeOFA(req *diam.Message, a *OFAAnswer) *diam.Message {
+	ans := answerFor(req, a.Result)
+	echoDRMP(ans, req)
+	add(ans, wSGd.supportedFeatures(a.SupportedFeatures)...)
+	add(ans,
+		wSGd.smDeliveryFailureCause(a.SMDeliveryFailureCause),
+		wSGd.octets(avpSMRPUI, a.SMRPUI),
+		wSGd.str(avpExternalIdentifier, a.ExternalIdentifier))
+	return ans
+}
 
-	if len(sn.SGSNNumber) > 0 {
-		avps = append(avps, diam.NewAVP(AVPSGSNNumber, avp.Mbit|avp.Vbit, VendorID3GPP,
-			datatype.OctetString(sn.SGSNNumber)))
-	}
-	if sn.SGSNName != "" {
-		avps = append(avps, diam.NewAVP(AVPSGSNName, avp.Mbit|avp.Vbit, VendorID3GPP,
-			datatype.DiameterIdentity(sn.SGSNName)))
-	}
-	if sn.SGSNRealm != "" {
-		avps = append(avps, diam.NewAVP(AVPSGSNRealm, avp.Mbit|avp.Vbit, VendorID3GPP,
-			datatype.DiameterIdentity(sn.SGSNRealm)))
-	}
-	if sn.MMEName != "" {
-		avps = append(avps, diam.NewAVP(AVPMMEName, avp.Mbit|avp.Vbit, VendorID3GPP,
-			datatype.DiameterIdentity(sn.MMEName)))
-	}
-	if sn.MMERealm != "" {
-		avps = append(avps, diam.NewAVP(AVPMMERealm, avp.Mbit|avp.Vbit, VendorID3GPP,
-			datatype.DiameterIdentity(sn.MMERealm)))
-	}
-	if len(sn.MMENumberForMTSMS) > 0 {
-		avps = append(avps, diam.NewAVP(AVPMMENumberForMTSMS, avp.Mbit|avp.Vbit, VendorID3GPP,
-			datatype.OctetString(sn.MMENumberForMTSMS)))
-	}
-	if len(sn.MSCNumber) > 0 {
-		avps = append(avps, diam.NewAVP(AVPMSCNumber, avp.Mbit|avp.Vbit, VendorID3GPP,
-			datatype.OctetString(sn.MSCNumber)))
-	}
-	if sn.ThreeGPPSMSCAddress != "" {
-		avps = append(avps, diam.NewAVP(AVPThreeGPPSMSCAddress, avp.Mbit|avp.Vbit, VendorID3GPP,
-			datatype.OctetString(sn.ThreeGPPSMSCAddress)))
-	}
+// ─── TFR / TFA (SGd, both directions) ────────────────────────────────────
 
-	if len(avps) > 0 {
-		snAVP := diam.NewAVP(AVPServingNode, avp.Mbit|avp.Vbit, VendorID3GPP, &diam.GroupedAVP{
-			AVP: avps,
-		})
-		msg.AVP = append(msg.AVP, snAVP)
+func decodeTFR(m *diam.Message, traceID string) *TFREvent {
+	l := avpList(m.AVP)
+	return &TFREvent{
+		Header:                    header(m, traceID),
+		UserName:                  asString(l.base(avpUserName)),
+		SupportedFeatures:         readSupportedFeatures(l),
+		SMSMICorrelationID:        readSMSMICorrelationID(l.get(avpSMSMICorrelationID)),
+		SCAddress:                 tbcdOf(l.get(avpSCAddress)),
+		SMRPUI:                    asBytes(l.get(avpSMRPUI)),
+		MMENumberForMTSMS:         tbcdOf(l.get(avpMMENumberForMTSMS)),
+		SGSNNumber:                tbcdOf(l.get(avpSGSNNumber)),
+		TFRFlags:                  u32Of(l.get(avpTFRFlags)),
+		SMDeliveryTimer:           u32Of(l.get(avpSMDeliveryTimer)),
+		SMDeliveryStartTime:       unixOf(l.get(avpSMDeliveryStartTime)),
+		MaximumRetransmissionTime: unixOf(l.get(avpMaxRetransmissionTime)),
+		SMSGMSCAddress:            tbcdOf(l.get(avpSMSGMSCAddress)),
 	}
 }
 
-// formatAddress formats TBCD-encoded address to string
-func (t *Translator) formatAddress(data []byte) string {
-	if len(data) == 0 {
-		return ""
-	}
-	// TBCD decoding: each byte has two digits, LSB first
-	result := ""
-	for _, b := range data {
-		d1 := b & 0x0F
-		d2 := (b >> 4) & 0x0F
-		if d1 <= 9 {
-			result += string('0' + d1)
-		}
-		if d2 <= 9 {
-			result += string('0' + d2)
-		}
-	}
-	return result
+func encodeTFA(req *diam.Message, a *TFAAnswer) *diam.Message {
+	ans := answerFor(req, a.Result)
+	echoDRMP(ans, req)
+	add(ans, wSGd.supportedFeatures(a.SupportedFeatures)...)
+	add(ans,
+		wSGd.u32p(avpAbsentUserDiagnosticSM, a.AbsentUserDiagnosticSM),
+		wSGd.smDeliveryFailureCause(a.SMDeliveryFailureCause),
+		wSGd.octets(avpSMRPUI, a.SMRPUI),
+		wSGd.unix(avpRequestedRetransmTime, a.RequestedRetransmissionTime),
+		wSGd.userIdentifier(a.UserIdentifier))
+	return ans
 }
 
-// FormatMSISDN extracts MSISDN from UserIdentifier
-func (t *Translator) FormatMSISDN(ui *UserIdentifier) string {
-	if ui == nil {
-		return ""
+func buildTFR(r *TFRRequest, sid, originHost, originRealm, destHost, destRealm string) *diam.Message {
+	m := newRequest(CommandTFR, AppIDSGd, sid, originHost, originRealm, destHost, destRealm)
+	add(m, userNameAVP(r.userName()))
+	add(m, wSGd.supportedFeatures(r.SupportedFeatures)...)
+	add(m,
+		wSGd.smsmiCorrelationID(r.SMSMICorrelationID),
+		wSGd.tbcd(avpSCAddress, r.SCAddress),
+		wSGd.octets(avpSMRPUI, r.SMRPUI),
+		wSGd.tbcd(avpMMENumberForMTSMS, r.MMENumberForMTSMS),
+		wSGd.tbcd(avpSGSNNumber, r.SGSNNumber),
+		wSGd.u32(avpTFRFlags, r.TFRFlags),
+		wSGd.u32(avpSMDeliveryTimer, r.SMDeliveryTimer),
+		wSGd.unix(avpSMDeliveryStartTime, r.SMDeliveryStartTime),
+		wSGd.unix(avpMaxRetransmissionTime, r.MaximumRetransmissionTime),
+		wSGd.tbcd(avpSMSGMSCAddress, r.SMSGMSCAddress))
+	return m
+}
+
+func decodeTFA(m *diam.Message) *TFAAnswer {
+	l := avpList(m.AVP)
+	return &TFAAnswer{
+		Result:                      readResult(m),
+		SupportedFeatures:           readSupportedFeatures(l),
+		AbsentUserDiagnosticSM:      u32Ptr(l.get(avpAbsentUserDiagnosticSM)),
+		SMDeliveryFailureCause:      readSMDeliveryFailureCause(l.get(avpSMDeliveryFailureCause)),
+		SMRPUI:                      asBytes(l.get(avpSMRPUI)),
+		RequestedRetransmissionTime: unixOf(l.get(avpRequestedRetransmTime)),
+		UserIdentifier:              readUserIdentifier(l.get(avpUserIdentifier)),
 	}
-	return t.formatAddress(ui.MSISDN)
 }
 
-// FormatMSISDNBytes formats MSISDN bytes to string
-func (t *Translator) FormatMSISDNBytes(data []byte) string {
-	return t.formatAddress(data)
-}
+// ─── SRR / SRA (S6c, both directions) ────────────────────────────────────
 
-// MaskMSISDN masks MSISDN for logging
-func (t *Translator) MaskMSISDN(msisdn string) string {
-	if len(msisdn) <= 6 {
-		return "***"
+func decodeSRR(m *diam.Message, traceID string) *SRREvent {
+	l := avpList(m.AVP)
+	return &SRREvent{
+		Header:                header(m, traceID),
+		MSISDN:                tbcdOf(l.get(avpMSISDN)),
+		UserName:              asString(l.base(avpUserName)),
+		SMSMICorrelationID:    readSMSMICorrelationID(l.get(avpSMSMICorrelationID)),
+		SupportedFeatures:     readSupportedFeatures(l),
+		SCAddress:             tbcdOf(l.get(avpSCAddress)),
+		SMRPMTI:               u32Ptr(l.get(avpSMRPMTI)),
+		SMRPSMEA:              asBytes(l.get(avpSMRPSMEA)),
+		SRRFlags:              u32Of(l.get(avpSRRFlags)),
+		SMDeliveryNotIntended: u32Ptr(l.get(avpSMDeliveryNotIntended)),
 	}
-	return msisdn[:3] + "****" + msisdn[len(msisdn)-3:]
 }
 
-// PDUToHex converts SMS PDU to hex string for debugging
-func (t *Translator) PDUToHex(pdu []byte) string {
-	return hex.EncodeToString(pdu)
+func encodeSRA(req *diam.Message, a *SRAAnswer) *diam.Message {
+	ans := answerFor(req, a.Result)
+	echoDRMP(ans, req)
+	add(ans, userNameAVP(a.UserName))
+	add(ans, wS6c.supportedFeatures(a.SupportedFeatures)...)
+	add(ans,
+		wS6c.servingNode(avpServingNode, a.ServingNode),
+		wS6c.servingNode(avpAdditionalServNode, a.AdditionalServingNode),
+		wS6c.smsfAddress(avpSMSF3GPPAddress, avpSMSF3GPPNumber, avpSMSF3GPPName, avpSMSF3GPPRealm, a.SMSF3GPPAddress),
+		wS6c.smsfAddress(avpSMSFNon3GPPAddress, avpSMSFNon3GPPNumber, avpSMSFNon3GPPName, avpSMSFNon3GPPRealm, a.SMSFNon3GPPAddress),
+		wS6c.octets(avpLMSI, a.LMSI),
+		wS6c.userIdentifier(a.UserIdentifier),
+		wS6c.u32(avpMWDStatus, a.MWDStatus),
+		wS6c.u32p(avpMMEAbsentUserDiag, a.MMEAbsentUserDiagnosticSM),
+		wS6c.u32p(avpMSCAbsentUserDiag, a.MSCAbsentUserDiagnosticSM),
+		wS6c.u32p(avpSGSNAbsentUserDiag, a.SGSNAbsentUserDiagnosticSM),
+		wS6c.u32p(avpSMSF3GPPAbsentUserDiag, a.SMSF3GPPAbsentUserDiagnosticSM),
+		wS6c.u32p(avpSMSFNon3GPPAbsentUserDiag, a.SMSFNon3GPPAbsentUserDiagnosticSM))
+	return ans
+}
+
+func buildSRR(r *SRRRequest, sid, originHost, originRealm, destHost, destRealm string) *diam.Message {
+	m := newRequest(CommandSRR, AppIDS6c, sid, originHost, originRealm, destHost, destRealm)
+	add(m, wS6c.tbcd(avpMSISDN, r.MSISDN), userNameAVP(r.UserName), wS6c.smsmiCorrelationID(r.SMSMICorrelationID))
+	add(m, wS6c.supportedFeatures(r.SupportedFeatures)...)
+	add(m,
+		wS6c.tbcd(avpSCAddress, r.SCAddress),
+		wS6c.enum(avpSMRPMTI, r.SMRPMTI),
+		wS6c.octets(avpSMRPSMEA, r.SMRPSMEA),
+		wS6c.u32(avpSRRFlags, r.flags()),
+		wS6c.enum(avpSMDeliveryNotIntended, r.SMDeliveryNotIntended))
+	return m
+}
+
+func decodeSRA(m *diam.Message) *SRAAnswer {
+	l := avpList(m.AVP)
+	a := &SRAAnswer{
+		Result:                            readResult(m),
+		UserName:                          asString(l.base(avpUserName)),
+		SupportedFeatures:                 readSupportedFeatures(l),
+		ServingNode:                       readServingNode(l.get(avpServingNode)),
+		AdditionalServingNode:             readServingNode(l.get(avpAdditionalServNode)),
+		SMSF3GPPAddress:                   readSMSFAddress(l.get(avpSMSF3GPPAddress), avpSMSF3GPPNumber, avpSMSF3GPPName, avpSMSF3GPPRealm),
+		SMSFNon3GPPAddress:                readSMSFAddress(l.get(avpSMSFNon3GPPAddress), avpSMSFNon3GPPNumber, avpSMSFNon3GPPName, avpSMSFNon3GPPRealm),
+		LMSI:                              asBytes(l.get(avpLMSI)),
+		UserIdentifier:                    readUserIdentifier(l.get(avpUserIdentifier)),
+		MWDStatus:                         u32Of(l.get(avpMWDStatus)),
+		MMEAbsentUserDiagnosticSM:         u32Ptr(l.get(avpMMEAbsentUserDiag)),
+		MSCAbsentUserDiagnosticSM:         u32Ptr(l.get(avpMSCAbsentUserDiag)),
+		SGSNAbsentUserDiagnosticSM:        u32Ptr(l.get(avpSGSNAbsentUserDiag)),
+		SMSF3GPPAbsentUserDiagnosticSM:    u32Ptr(l.get(avpSMSF3GPPAbsentUserDiag)),
+		SMSFNon3GPPAbsentUserDiagnosticSM: u32Ptr(l.get(avpSMSFNon3GPPAbsentUserDiag)),
+	}
+	if n := a.ServingNode; n != nil {
+		a.MMEName, a.MMERealm = n.MMEName, n.MMERealm
+		a.SGSNName, a.SGSNRealm, a.SGSNNumber = n.SGSNName, n.SGSNRealm, n.SGSNNumber
+	}
+	return a
+}
+
+// ─── ALR / ALA (S6c application, both directions) ────────────────────────
+
+func decodeALR(m *diam.Message, traceID string) *ALREvent {
+	l := avpList(m.AVP)
+	return &ALREvent{
+		Header:                    header(m, traceID),
+		SCAddress:                 tbcdOf(l.get(avpSCAddress)),
+		UserIdentifier:            readUserIdentifier(l.get(avpUserIdentifier)),
+		SMSMICorrelationID:        readSMSMICorrelationID(l.get(avpSMSMICorrelationID)),
+		MaximumUEAvailabilityTime: unixOf(l.get(avpMaxUEAvailabilityTime)),
+		SMSGMSCAlertEvent:         u32Of(l.get(avpSMSGMSCAlertEvent)),
+		ServingNode:               readServingNode(l.get(avpServingNode)),
+		SupportedFeatures:         readSupportedFeatures(l),
+	}
+}
+
+func encodeALA(req *diam.Message, a *ALAAnswer) *diam.Message {
+	ans := answerFor(req, a.Result)
+	echoDRMP(ans, req)
+	add(ans, wS6c.supportedFeatures(a.SupportedFeatures)...)
+	return ans
+}
+
+func buildALR(r *ALRRequest, sid, originHost, originRealm, destHost, destRealm string) *diam.Message {
+	m := newRequest(CommandALR, AppIDS6c, sid, originHost, originRealm, destHost, destRealm)
+	add(m,
+		wS6c.tbcd(avpSCAddress, r.SCAddress),
+		wS6c.userIdentifier(r.userIdentifier()),
+		wS6c.smsmiCorrelationID(r.SMSMICorrelationID),
+		wS6c.unix(avpMaxUEAvailabilityTime, r.MaximumUEAvailabilityTime),
+		wS6c.u32(avpSMSGMSCAlertEvent, r.SMSGMSCAlertEvent),
+		wS6c.servingNode(avpServingNode, r.ServingNode))
+	add(m, wS6c.supportedFeatures(r.SupportedFeatures)...)
+	return m
+}
+
+func decodeALA(m *diam.Message) *ALAAnswer {
+	return &ALAAnswer{Result: readResult(m), SupportedFeatures: readSupportedFeatures(m.AVP)}
+}
+
+// ─── RDR / RDA (S6c, both directions) ────────────────────────────────────
+
+func decodeRDR(m *diam.Message, traceID string) *RDREvent {
+	l := avpList(m.AVP)
+	return &RDREvent{
+		Header:             header(m, traceID),
+		SupportedFeatures:  readSupportedFeatures(l),
+		UserIdentifier:     readUserIdentifier(l.get(avpUserIdentifier)),
+		SMSMICorrelationID: readSMSMICorrelationID(l.get(avpSMSMICorrelationID)),
+		SCAddress:          tbcdOf(l.get(avpSCAddress)),
+		SMDeliveryOutcome:  readSMDeliveryOutcome(l.get(avpSMDeliveryOutcome)),
+		RDRFlags:           u32Of(l.get(avpRDRFlags)),
+	}
+}
+
+func encodeRDA(req *diam.Message, a *RDAAnswer) *diam.Message {
+	ans := answerFor(req, a.Result)
+	echoDRMP(ans, req)
+	add(ans, wS6c.supportedFeatures(a.SupportedFeatures)...)
+	add(ans, wS6c.userIdentifier(a.UserIdentifier))
+	return ans
+}
+
+func buildRDR(r *RDRRequest, sid, originHost, originRealm, destHost, destRealm string) *diam.Message {
+	m := newRequest(CommandRDR, AppIDS6c, sid, originHost, originRealm, destHost, destRealm)
+	add(m, wS6c.supportedFeatures(r.SupportedFeatures)...)
+	add(m,
+		wS6c.userIdentifier(r.userIdentifier()),
+		wS6c.smsmiCorrelationID(r.SMSMICorrelationID),
+		wS6c.tbcd(avpSCAddress, r.SCAddress),
+		wS6c.smDeliveryOutcome(r.SMDeliveryOutcome),
+		wS6c.u32(avpRDRFlags, r.RDRFlags))
+	return m
+}
+
+func decodeRDA(m *diam.Message) *RDAAnswer {
+	l := avpList(m.AVP)
+	return &RDAAnswer{
+		Result:            readResult(m),
+		SupportedFeatures: readSupportedFeatures(l),
+		UserIdentifier:    readUserIdentifier(l.get(avpUserIdentifier)),
+	}
+}
+
+// newRequest opens a request: R and P flags ("REQ, PXY" in every command's
+// format), Session-Id, Auth-Session-State NO_STATE_MAINTAINED, the origin
+// and the destination.
+func newRequest(code, app uint32, sid, originHost, originRealm, destHost, destRealm string) *diam.Message {
+	m := diam.NewMessage(code, diam.RequestFlag|diam.ProxiableFlag, app, 0, 0, dict.Default)
+	add(m,
+		diam.NewAVP(avp.SessionID, avp.Mbit, 0, datatype.UTF8String(sid)),
+		diam.NewAVP(avp.AuthSessionState, avp.Mbit, 0, datatype.Enumerated(1)),
+		diam.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(originHost)),
+		diam.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(originRealm)))
+	if destHost != "" {
+		add(m, diam.NewAVP(avp.DestinationHost, avp.Mbit, 0, datatype.DiameterIdentity(destHost)))
+	}
+	add(m, diam.NewAVP(avp.DestinationRealm, avp.Mbit, 0, datatype.DiameterIdentity(destRealm)))
+	return m
 }

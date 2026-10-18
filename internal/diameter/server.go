@@ -47,19 +47,22 @@ type ChargingHandler interface {
 	HandleCCR(c diam.Conn, m *diam.Message)
 }
 
-// SGdHandler handles SGd SMS interface messages (TS 29.338)
+// SGdHandler handles S6c and SGd requests from the network (TS 29.338).
 type SGdHandler interface {
-	HandleOFR(c diam.Conn, m *diam.Message) // MO-Forward-Short-Message
-	HandleTFR(c diam.Conn, m *diam.Message) // MT-Forward-Short-Message
-	HandleSRR(c diam.Conn, m *diam.Message) // Send-Routing-Info-for-SM
-	HandleALR(c diam.Conn, m *diam.Message) // Alert-Service-Centre
+	HandleOFR(c diam.Conn, m *diam.Message) // MO-Forward-Short-Message (SGd)
+	HandleTFR(c diam.Conn, m *diam.Message) // MT-Forward-Short-Message (SGd)
+	HandleSRR(c diam.Conn, m *diam.Message) // Send-Routing-Info-for-SM (S6c)
+	HandleALR(c diam.Conn, m *diam.Message) // Alert-Service-Centre (S6c)
+	HandleRDR(c diam.Conn, m *diam.Message) // Report-SM-Delivery-Status (S6c)
 }
 
-// SGdAnswerHandler handles SGd answer messages (reverse flow: SMSC → HSS/MME)
+// SGdAnswerHandler handles the answers to the S6c and SGd requests
+// applications send.
 type SGdAnswerHandler interface {
 	HandleSRA(c diam.Conn, m *diam.Message) // Send-Routing-Info-for-SM-Answer
 	HandleTFA(c diam.Conn, m *diam.Message) // MT-Forward-Short-Message-Answer
 	HandleALA(c diam.Conn, m *diam.Message) // Alert-Service-Centre-Answer
+	HandleRDA(c diam.Conn, m *diam.Message) // Report-SM-Delivery-Status-Answer
 }
 
 // GxAnswerHandler handles Gx reverse-direction answer messages (PCEF → PCRF
@@ -206,6 +209,7 @@ func (s *DiameterServer) Start(ctx context.Context) error {
 		s.stateMachine.HandleFunc("TFR", s.admitGate(s.sgdHandler.HandleTFR)) // MT-Forward-Short-Message
 		s.stateMachine.HandleFunc("SRR", s.admitGate(s.sgdHandler.HandleSRR)) // Send-Routing-Info-for-SM
 		s.stateMachine.HandleFunc("ALR", s.admitGate(s.sgdHandler.HandleALR)) // Alert-Service-Centre
+		s.stateMachine.HandleFunc("RDR", s.admitGate(s.sgdHandler.HandleRDR)) // Report-SM-Delivery-Status
 		logger.Info("SGd SMS handlers registered")
 	}
 
@@ -214,6 +218,7 @@ func (s *DiameterServer) Start(ctx context.Context) error {
 		s.stateMachine.HandleFunc("SRA", s.sgdAnswerHandler.HandleSRA) // Send-Routing-Info-for-SM-Answer
 		s.stateMachine.HandleFunc("TFA", s.sgdAnswerHandler.HandleTFA) // MT-Forward-Short-Message-Answer
 		s.stateMachine.HandleFunc("ALA", s.sgdAnswerHandler.HandleALA) // Alert-Service-Centre-Answer
+		s.stateMachine.HandleFunc("RDA", s.sgdAnswerHandler.HandleRDA) // Report-SM-Delivery-Status-Answer
 		logger.Info("SGd SMS answer handlers registered (reverse flow)")
 	}
 

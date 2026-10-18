@@ -9,7 +9,7 @@ the gateway handles the Diameter peer connections, the base protocol and the enc
 ┌──────────────┐  Diameter  ┌──────────────────────┐  NATS core   ┌──────────────┐
 │ S6a, S13     │◄──────────►│ peers, CER/DWR/DPR   │ request/reply│ HSS, EIR     │
 │ Gx, Gy, Ro   │ TCP / SCTP │ AVP ⇄ JSON           │◄────────────►│ PCRF, OCS    │
-│ SGd          │  (TLS opt.)│ admin API + UI       │ queue groups │ SMSC         │
+│ SGd, S6c     │  (TLS opt.)│ admin API + UI       │ queue groups │ SMSC         │
 └──────────────┘            └──────────────────────┘              └──────────────┘
 ```
 
@@ -31,7 +31,8 @@ applications are not checked against their specifications yet (see
 | Gx (TS 29.212) | PCEF ⇄ PCRF | CCR | RAR, ASR |
 | Gy (RFC 4006, TS 32.299) | PGW ⇄ OCS | CCR | — |
 | Ro (RFC 4006, TS 32.299) | IMS ⇄ OCS | CCR | — |
-| SGd (TS 29.338) — not working, see [Known limitations](#known-limitations) | MME ⇄ SMSC | OFR, TFR, SRR, ALR | SRR, TFR, ALR |
+| SGd (TS 29.338) | MME ⇄ SMSC | OFR, TFR | TFR |
+| S6c (TS 29.338) | SMSC ⇄ HSS; ALR also MME ⇄ SMSC | SRR, ALR, RDR | SRR, ALR, RDR |
 
 - **Requests from the network** are published as a NATS request on `diameter.<app>.<cmd>`
   (`diameter.s6a.ulr`, `diameter.gx.ccr`, …); the application's reply becomes the Diameter answer.
@@ -40,7 +41,9 @@ applications are not checked against their specifications yet (see
   `32275@3gpp.org` by default).
 - **Requests from an application** are NATS requests to the gateway (`diameter.s6a.idr`,
   `diameter.gx.rar`, `diameter.sgd.tfr.request`, …). The gateway sends the Diameter request to the
-  peer the application names and replies with the peer's result.
+  peer the application names and replies with the peer's result. S6c and SGd share the
+  `diameter.sgd.*` subjects; an S6c or SGd request without `destination_host` (and, for TFR,
+  `mme_name`) goes to any connected peer.
 - **Base protocol (RFC 6733):** capabilities exchange with a peer whitelist (source IP and
   Origin-Host), watchdog (DWR/DWA), disconnect (DPR/DPA) and drain on shutdown, Failed-AVP on
   missing mandatory AVPs, Redirect-Host handling with a per-command retry policy, per-peer rate
@@ -55,8 +58,8 @@ applications are not checked against their specifications yet (see
 - **Metrics** in Prometheus format on port 8080, `/metrics`.
 
 The subjects and JSON envelopes of S6a and S13 are documented in the client module. Gx, Gy, Ro and
-SGd envelopes are defined in this repository (`internal/charging`, `internal/sms/sgd`) and are not
-yet a published contract.
+S6c/SGd envelopes are defined in this repository (`internal/charging`, `internal/sms/sgd`) and are
+not yet a published contract.
 
 ## Running it
 
@@ -98,7 +101,9 @@ answers the request with its publish acknowledgement, and the requester never se
   are discarded. The metrics port is fixed at 8080.
 - **Specification coverage.** S6a and S13 AVP codes, flags and types are tested against TS 29.272
   Table 7.3.1/1. AVPs that TS 29.272 re-uses from TS 29.212, 29.214, 29.229, 29.061 and 32.299, and
-  the Gx, Gy, Ro and SGd applications, have not been checked against those specifications.
+  Gx, Gy and Ro have been audited against TS 29.212, 32.299 and RFC 8506 (see the CHANGELOG for what
+  is fixed); S6c and SGd follow TS 29.338 V17.2.0. Many optional AVPs of Gx, Gy and Ro are not
+  passed to applications.
 - **SCEF features are not supported.** AESE-Communication-Pattern and
   Monitoring-Event-Configuration (TS 29.336) are not sent in Subscription-Data.
 - **Incomplete groups are dropped.** A Subscription-Data group whose mandatory child is missing
@@ -108,9 +113,6 @@ answers the request with its publish acknowledgement, and the requester never se
 - **In-memory state per replica.** Pending gateway-initiated requests, Gx session-to-peer bindings
   and the redirect cache live in one replica's memory and are lost when it stops.
 - Gy re-authorisation (RAR) is not implemented.
-- **SGd does not work.** Its commands are defined under the S6c Application-Id (16777312; SGd is
-  16777313, TS 29.338 §4.8) and cannot be decoded; an SGd message closes the connection it arrives
-  on. Do not route SGd or S6c traffic to the gateway until it is rewritten.
 
 ## Contributing
 

@@ -170,12 +170,12 @@ func main() {
 		sgdClient := sgd.NewClient(natsClient, peerManager, cfg, sgdTimeout)
 		server.SetSGdAnswerHandler(sgdClient)
 
-		// Start listening for SMSC requests (SRR, TFR, ALR)
+		// Start listening for application requests (SRR, TFR, ALR, RDR)
 		if err := sgdClient.StartListening(); err != nil {
 			logger.Error("Failed to start SGd client", err)
 		} else {
 			logger.Info("SGd SMS client enabled (reverse flow)",
-				logger.String("topics", "diameter.sgd.{srr,tfr,alr}.request"))
+				logger.String("topics", "diameter.sgd.{srr,tfr,alr,rdr}.request"))
 		}
 
 		logger.Info("SGd SMS handler enabled",

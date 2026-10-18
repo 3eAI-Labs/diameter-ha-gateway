@@ -331,6 +331,10 @@ var (
 
 func init() { sessionIDLow.Store(rand.Uint32()) }
 
+// NewSessionID returns a Session-Id for a request the gateway originates, in
+// the form described above.
+func NewSessionID(originHost, kind string) string { return uniqueSessionID(originHost, kind) }
+
 func uniqueSessionID(originHost, kind string) string {
 	return fmt.Sprintf("%s;%d;%d;%s", originHost, sessionIDHigh, sessionIDLow.Add(1), kind)
 }

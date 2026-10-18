@@ -2,19 +2,19 @@ apiVersion: v2
 name: diameter-ha-gateway
 description: >-
   Diameter gateway that terminates 4G/LTE Diameter interfaces (S6a, S13, Gx,
-  Gy, Ro, SGd) and hands each request to an application over NATS. Keeps no
+  Gy, Ro, SGd, S6c) and hands each request to an application over NATS. Keeps no
   subscriber state; replicas share the load through NATS queue groups.
   Arinna-onboardable per the Product Packaging Contract v2.0 (chart-only intake).
 type: application
 
 # Chart version — bump independently of the application (SemVer). Breaking
 # values.schema.json changes require a MAJOR bump (Contract §2, §4.7).
-version: 0.3.0
+version: 0.3.1
 
 # Application version — the diameter-gateway binary this chart deploys. Releases
 # go to ghcr.io/3eai-labs/diameter-ha-gateway:<appVersion>; 0.9.4 was published
 # to registry.3eai-labs.com only.
-appVersion: "0.11.0"
+appVersion: "0.12.0"
 
 keywords:
   - diameter
@@ -28,6 +28,7 @@ keywords:
   - gy
   - ro
   - sgd
+  - s6c
   - nats
   - hss
   - ocs
