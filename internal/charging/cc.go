@@ -520,7 +520,9 @@ func WriteMSCC(m *MSCC) *diam.AVP {
 	// the group is left out rather than sent malformed.
 	if pf := m.PSFurnishChargingInfo; pf != nil && len(pf.ThreeGPPChargingID) > 0 {
 		g.AddAVP(tgpp(codePSFurnishChargingInfo, group(
-			diam.NewAVP(code3GPPChargingID, avp.Vbit, vendor3GPP, datatype.OctetString(pf.ThreeGPPChargingID)),
+			// A RADIUS VSA of TS 29.061 takes the M bit in charging (TS
+			// 32.299 §7.2.0).
+			tgpp(code3GPPChargingID, datatype.OctetString(pf.ThreeGPPChargingID)),
 			tgpp(codePSFreeFormatData, datatype.OctetString(pf.PSFreeFormatData)),
 			ptrEnum(codePSAppendFreeFormat, pf.PSAppendFreeFormatData, tgpp))))
 	}

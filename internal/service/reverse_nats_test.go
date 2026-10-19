@@ -11,6 +11,7 @@ import (
 	pb "github.com/3eAI-Labs/diameter-ha-gateway-client"
 	"github.com/3eAI-Labs/diameter-ha-gateway/internal/config"
 	"github.com/3eAI-Labs/diameter-ha-gateway/internal/diameter"
+	"github.com/3eAI-Labs/diameter-ha-gateway/internal/diamtest"
 	internalNats "github.com/3eAI-Labs/diameter-ha-gateway/internal/nats"
 	"github.com/3eAI-Labs/diameter-ha-gateway/internal/natstest"
 	"github.com/fiorix/go-diameter/v4/diam"
@@ -89,4 +90,33 @@ func TestReverse_ExperimentalResultReachesApplication(t *testing.T) {
 	var ans pb.S6aAnswer
 	require.NoError(t, json.Unmarshal(msg.Data, &ans))
 	assert.Equal(t, pb.S6aAnswer{ExperimentalResultCode: 5001}, ans)
+}
+
+// TestReverse_SilentMMEDelaysNoOtherRequest: a subscription's callbacks
+// run one at a time; an MME that does not answer must not hold up a CLR
+// to another MME until the first one times out.
+func TestReverse_SilentMMEDelaysNoOtherRequest(t *testing.T) {
+	rs, app := startReverse(t)
+	hung, mme := &diamtest.Conn{}, &diamtest.Conn{}
+	rs.peerManager.Register(hung, "hung.example")
+	rs.peerManager.Register(mme, "mme.example")
+
+	go app.Request("diameter.s6a.clr", []byte(`{"imsi":"001010000000001","header":{"source_host":"hung.example"}}`), 6*time.Second)
+	written(t, hung, 1)
+
+	start := time.Now()
+	done := make(chan *nats.Msg, 1)
+	go func() {
+		msg, err := app.Request("diameter.s6a.clr", []byte(`{"imsi":"001010000000002","header":{"source_host":"mme.example"}}`), 6*time.Second)
+		assert.NoError(t, err)
+		done <- msg
+	}()
+	clr := written(t, mme, 1)
+	rs.HandleCLA(mme, answerTo(clr, 2001, "mme.example"))
+	msg := <-done
+	require.NotNil(t, msg)
+	var ans pb.S6aAnswer
+	require.NoError(t, json.Unmarshal(msg.Data, &ans))
+	assert.Equal(t, uint32(2001), ans.ResultCode)
+	assert.Less(t, time.Since(start), 2*time.Second, "waited for the silent MME")
 }

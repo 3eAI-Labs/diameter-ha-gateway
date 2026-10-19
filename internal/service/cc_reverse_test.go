@@ -215,20 +215,3 @@ func TestCCReverse_ConcurrentAndLate(t *testing.T) {
 	assert.Equal(t, uint32(diam.InvalidAVPValue),
 		(<-request(TopicRoRAR, `{"header":{"session_id":"p;1","destination_host":"pgw.example"},"re_auth_request_type":2}`)).ResultCode)
 }
-
-// TestInflight_Bounded: past maxInFlight waiting requests, a request is
-// refused at once rather than started.
-func TestInflight_Bounded(t *testing.T) {
-	f := make(inflight, 2)
-	release := make(chan struct{})
-	var busy int
-	h := f.wrap(func(*nats.Msg) { <-release }, func(*nats.Msg) { busy++ })
-	for i := 0; i < 3; i++ {
-		h(&nats.Msg{})
-	}
-	assert.Equal(t, 1, busy)
-	close(release)
-	require.Eventually(t, func() bool { return len(f) == 0 }, time.Second, 5*time.Millisecond)
-	h(&nats.Msg{})
-	assert.Equal(t, 1, busy, "a slot freed is reused")
-}

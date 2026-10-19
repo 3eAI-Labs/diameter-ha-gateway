@@ -4,13 +4,17 @@
 package gy
 
 import (
+	"bytes"
 	"encoding/json"
+	"net"
 	"testing"
+	"time"
 
 	"github.com/3eAI-Labs/diameter-ha-gateway/internal/charging"
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/avp"
 	"github.com/fiorix/go-diameter/v4/diam/datatype"
+	"github.com/fiorix/go-diameter/v4/diam/dict"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -478,3 +482,48 @@ func BenchmarkToJSONAnswer(b *testing.B) {
 }
 
 func rg(v uint32) *uint32 { return &v }
+
+// TestServiceInformation_Whole: a CCR's Service-Information reaches the
+// application whole, a PS-Information child the gateway had no field for
+// (TWAG-Address, User-Location-Info-Time) included; the application's
+// Service-Information is sent in the CCA (TS 32.299 §6.4.3).
+func TestServiceInformation_Whole(t *testing.T) {
+	tr := NewTranslator()
+	req := buildTestCCR(t, charging.CCRequestTypeInitial, 0)
+	req.NewAVP(873, avp.Mbit|avp.Vbit, 10415, &diam.GroupedAVP{AVP: []*diam.AVP{
+		diam.NewAVP(874, avp.Mbit|avp.Vbit, 10415, &diam.GroupedAVP{AVP: []*diam.AVP{
+			diam.NewAVP(30, avp.Mbit, 0, datatype.UTF8String("internet")),
+			diam.NewAVP(3903, avp.Mbit|avp.Vbit, 10415, datatype.Address(net.ParseIP("192.0.2.7").To4())),
+			diam.NewAVP(2812, avp.Vbit, 10415, datatype.Time(time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC))),
+		}}),
+	}})
+	b, err := req.Serialize()
+	require.NoError(t, err)
+	wire, err := diam.ReadMessage(bytes.NewReader(b), dict.Default)
+	require.NoError(t, err)
+	event, err := tr.ToCCREvent(wire, "t")
+	require.NoError(t, err)
+	require.NotNil(t, event.ServiceInformation)
+	j, err := json.Marshal(event.ServiceInformation.AVPs)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"name":"PS-Information","code":874,"vendor_id":10415,"type":"Grouped","avps":[
+		{"name":"Called-Station-Id","code":30,"type":"UTF8String","value":"internet"},
+		{"name":"TWAG-Address","code":3903,"vendor_id":10415,"type":"Address","value":"192.0.2.7"},
+		{"name":"User-Location-Info-Time","code":2812,"vendor_id":10415,"type":"Time","value":"2026-10-19T09:00:00Z"}]}]`, string(j))
+	assert.Equal(t, "internet", event.ServiceInformation.PSInformation.CalledStationID, "typed fields kept")
+
+	var answer GyAnswer
+	require.NoError(t, json.Unmarshal([]byte(`{"result_code":2001,"service_information":{"avps":[
+		{"name":"PS-Information","avps":[{"name":"Called-Station-Id","value":"internet"}]}]}}`), &answer))
+	cca, err := tr.ToCCAMessage(&answer, req)
+	require.NoError(t, err)
+	si := findAVPByCode(cca, 873)
+	require.NotNil(t, si)
+	ps := si.Data.(*diam.GroupedAVP).AVP[0]
+	assert.Equal(t, uint32(874), ps.Code)
+	assert.Equal(t, datatype.UTF8String("internet"), ps.Data.(*diam.GroupedAVP).AVP[0].Data)
+
+	require.NoError(t, json.Unmarshal([]byte(`{"result_code":2001,"service_information":{"avps":[{"name":"No-Such-AVP","value":1}]}}`), &answer))
+	_, err = tr.ToCCAMessage(&answer, req)
+	assert.Error(t, err, "an AVP the gateway cannot write is not dropped silently")
+}

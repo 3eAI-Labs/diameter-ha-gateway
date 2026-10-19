@@ -127,6 +127,7 @@ type RDRRequest struct {
 // Client sends the S6c and SGd requests applications publish, and replies
 // with the peer's answer.
 type Client struct {
+	inflight    internalNats.Inflight
 	natsClient  *internalNats.Client
 	peerManager *diameter.PeerManager
 	cfg         *config.Config
@@ -151,7 +152,7 @@ func NewClient(nc *internalNats.Client, pm *diameter.PeerManager, cfg *config.Co
 		timeout = 5 * time.Second
 	}
 	return &Client{natsClient: nc, peerManager: pm, cfg: cfg, timeout: timeout,
-		pendingReqs: make(map[string]*pendingReq)}
+		pendingReqs: make(map[string]*pendingReq), inflight: internalNats.NewInflight()}
 }
 
 // queueGroup makes replicas share application requests: each is sent to the
@@ -165,7 +166,11 @@ func (c *Client) StartListening() error {
 		TopicSGdALRRequest: c.handleALRRequest,
 		TopicSGdRDRRequest: c.handleRDRRequest,
 	} {
-		if _, err := c.natsClient.QueueSubscribe(subject, queueGroup, handle); err != nil {
+		// Each request waits for its peer concurrently
+		// (internal/nats/inflight.go): a peer that does not answer delays
+		// no other request.
+		busy := func(m *nats.Msg) { c.replyError(m, diam.TooBusy, "too many requests pending") }
+		if _, err := c.natsClient.QueueSubscribe(subject, queueGroup, c.inflight.Wrap(handle, busy)); err != nil {
 			return fmt.Errorf("subscribe %s: %w", subject, err)
 		}
 	}

@@ -35,6 +35,7 @@ import (
 // fast-fail every in-flight request to that host with 4012 (AGENT_FAILOVER)
 // instead of waiting for reverse_timeout.
 type ReverseService struct {
+	inflight      internalNats.Inflight
 	natsClient    *internalNats.Client
 	peerManager   *diameter.PeerManager
 	translator    *diameter.Translator
@@ -70,6 +71,7 @@ func NewReverseService(nc *internalNats.Client, pm *diameter.PeerManager, cfg *c
 		capacity = 10000
 	}
 	rs := &ReverseService{
+		inflight:    internalNats.NewInflight(),
 		natsClient:  nc,
 		peerManager: pm,
 		translator:  diameter.NewTranslator(),
@@ -168,7 +170,11 @@ func (rs *ReverseService) StartListening() {
 }
 
 func (rs *ReverseService) subscribe(topic, label string, handler func(*nats.Msg)) {
-	if _, err := rs.natsClient.QueueSubscribe(topic, "diameter-gw", handler); err != nil {
+	// Each request waits for its MME concurrently
+	// (internal/nats/inflight.go): an MME that does not answer delays no
+	// other request.
+	busy := func(m *nats.Msg) { rs.sendNatsError(m, 3004) }
+	if _, err := rs.natsClient.QueueSubscribe(topic, "diameter-gw", rs.inflight.Wrap(handler, busy)); err != nil {
 		logger.Error("Failed to subscribe to reverse topic", err,
 			logger.String("topic", topic),
 			logger.String("cmd", label))

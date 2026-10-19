@@ -84,7 +84,7 @@ type GyAnswer struct {
 	CostInformation      *charging.CostInformation `json:"cost_information,omitempty"`
 	RemainingBalance     *charging.CCMoney         `json:"remaining_balance,omitempty"`
 
-	// Service Information (for reverse path responses)
+	// Service-Information (TS 32.299 §6.4.3); only its avps are sent.
 	ServiceInformation *charging.ServiceInformation `json:"service_information,omitempty"`
 }
 

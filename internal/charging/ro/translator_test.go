@@ -408,3 +408,40 @@ func TestToCCAMessage_MSCCAsGy(t *testing.T) {
 	require.NotNil(t, got[0].FinalUnitIndication.RedirectServer)
 	assert.Equal(t, "http://topup", got[0].FinalUnitIndication.RedirectServer.RedirectServerAddress)
 }
+
+// TestServiceInformation_Whole: an IMS-Information child the gateway had
+// no field for (Cellular-Network-Information, FE-Identifier-List) reaches
+// the application; the application's Service-Information is sent in the
+// CCA (TS 32.299 §6.4.3).
+func TestServiceInformation_Whole(t *testing.T) {
+	tr := NewTranslator()
+	req := buildTestRoCCR(t, charging.CCRequestTypeInitial, 0)
+	req.NewAVP(873, avp.Mbit|avp.Vbit, 10415, &diam.GroupedAVP{AVP: []*diam.AVP{
+		diam.NewAVP(876, avp.Mbit|avp.Vbit, 10415, &diam.GroupedAVP{AVP: []*diam.AVP{
+			diam.NewAVP(862, avp.Mbit|avp.Vbit, 10415, datatype.Enumerated(6)),
+			diam.NewAVP(3924, avp.Vbit, 10415, datatype.OctetString([]byte{1, 2})),
+			diam.NewAVP(4413, avp.Mbit|avp.Vbit, 10415, datatype.UTF8String("fe-1")),
+		}}),
+	}})
+	b, err := req.Serialize()
+	require.NoError(t, err)
+	wire, err := diam.ReadMessage(bytes.NewReader(b), dict.Default)
+	require.NoError(t, err)
+	event, err := tr.ToCCREvent(wire, "t")
+	require.NoError(t, err)
+	j, err := json.Marshal(event.ServiceInformation.AVPs)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"name":"IMS-Information","code":876,"vendor_id":10415,"type":"Grouped","avps":[
+		{"name":"Node-Functionality","code":862,"vendor_id":10415,"type":"Enumerated","value":6},
+		{"name":"Cellular-Network-Information","code":3924,"vendor_id":10415,"type":"OctetString","value":"AQI="},
+		{"name":"FE-Identifier-List","code":4413,"vendor_id":10415,"type":"UTF8String","value":"fe-1"}]}]`, string(j))
+
+	var answer RoAnswer
+	require.NoError(t, json.Unmarshal([]byte(`{"result_code":2001,"service_information":{"avps":[
+		{"name":"IMS-Information","avps":[{"name":"Node-Functionality","value":6}]}]}}`), &answer))
+	cca, err := tr.ToCCAMessage(&answer, req)
+	require.NoError(t, err)
+	si, err := cca.FindAVP(873, 10415)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(876), si.Data.(*diam.GroupedAVP).AVP[0].Code)
+}

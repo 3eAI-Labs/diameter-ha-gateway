@@ -43,7 +43,7 @@ type CCReverseService struct {
 	sessions    SessionLookup
 	cfg         *config.Config
 
-	inflight inflight
+	inflight internalNats.Inflight
 	mu       sync.Mutex
 	pending  map[string]*ccPending
 }
@@ -58,7 +58,7 @@ type ccPending struct {
 
 func NewCCReverseService(nc *internalNats.Client, pm *diameter.PeerManager, sessions SessionLookup, cfg *config.Config) *CCReverseService {
 	s := &CCReverseService{natsClient: nc, peerManager: pm, sessions: sessions, cfg: cfg,
-		pending: make(map[string]*ccPending), inflight: newInflight()}
+		pending: make(map[string]*ccPending), inflight: internalNats.NewInflight()}
 	pm.AddDropListener(s.OnPeerDrop)
 	return s
 }
@@ -68,9 +68,10 @@ func (s *CCReverseService) StartListening() error {
 		TopicGyRAR: s.handleRAR, TopicRoRAR: s.handleRAR,
 		TopicGyASR: s.handleASR, TopicRoASR: s.handleASR,
 	} {
-		// Each request waits for its client concurrently (inflight.go), so
-		// a client that does not answer delays no other session.
-		if _, err := s.natsClient.QueueSubscribe(subject, "diameter-gw", s.inflight.wrap(handle, s.busy)); err != nil {
+		// Each request waits for its client concurrently
+		// (internal/nats/inflight.go): a client that does not answer
+		// delays no other session.
+		if _, err := s.natsClient.QueueSubscribe(subject, "diameter-gw", s.inflight.Wrap(handle, s.busy)); err != nil {
 			return err
 		}
 	}

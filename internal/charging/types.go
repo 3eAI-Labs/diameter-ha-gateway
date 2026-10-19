@@ -269,6 +269,11 @@ type Envelope struct {
 
 // ServiceInformation contains service-specific charging info
 type ServiceInformation struct {
+	// AVPs is the whole Service-Information: in a CCR every child as
+	// received, at every depth; in a CCA what the gateway sends (the typed
+	// fields below are read from a CCR only).
+	AVPs []AVP `json:"avps,omitempty"`
+
 	PSInformation    *PSInformation    `json:"ps_information,omitempty"`
 	IMSInformation   *IMSInformation   `json:"ims_information,omitempty"`
 	MMSInformation   *MMSInformation   `json:"mms_information,omitempty"`

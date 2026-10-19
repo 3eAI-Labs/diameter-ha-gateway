@@ -107,8 +107,9 @@ answers the request with its publish acknowledgement, and the requester never se
 - **Specification coverage.** S6a and S13 AVP codes, flags and types are tested against TS 29.272
   Table 7.3.1/1. AVPs that TS 29.272 re-uses from TS 29.212, 29.214, 29.229, 29.061 and 32.299, and
   Gx, Gy and Ro have been audited against TS 29.212, 32.299 and RFC 8506 (see the CHANGELOG for what
-  is fixed); S6c and SGd follow TS 29.338 V17.2.0. Many optional AVPs of Gx, Gy and Ro are not
-  passed to applications.
+  is fixed); S6c and SGd follow TS 29.338 V17.2.0. Gy and Ro pass a CCR's Service-Information
+  whole (`service_information.avps`); many optional AVPs of a Gx CCR are not passed to
+  applications.
 - **SCEF features are not supported.** AESE-Communication-Pattern and
   Monitoring-Event-Configuration (TS 29.336) are not sent in Subscription-Data.
 - **Incomplete groups are dropped.** A Subscription-Data group whose mandatory child is missing

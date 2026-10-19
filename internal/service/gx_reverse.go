@@ -45,7 +45,7 @@ import (
 // GxReverseService routes PCRF-initiated RAR/ASR over NATS into Diameter
 // requests for the PCEF peer that originated the Gx session.
 type GxReverseService struct {
-	inflight      inflight
+	inflight      internalNats.Inflight
 	natsClient    *internalNats.Client
 	peerManager   *diameter.PeerManager
 	gxTranslator  *gx.Translator
@@ -87,7 +87,7 @@ func NewGxReverseService(
 	cfg *config.Config,
 ) *GxReverseService {
 	s := &GxReverseService{
-		inflight:      newInflight(),
+		inflight:      internalNats.NewInflight(),
 		natsClient:    nc,
 		peerManager:   pm,
 		gxTranslator:  gx.NewTranslator(),
@@ -129,10 +129,11 @@ func (s *GxReverseService) StartListening() {
 }
 
 func (s *GxReverseService) subscribe(topic, label string, handler func(*nats.Msg)) {
-	// Each request waits for its PCEF concurrently (inflight.go), so a PCEF
-	// that does not answer delays no other session.
+	// Each request waits for its PCEF concurrently
+	// (internal/nats/inflight.go): a PCEF that does not answer delays no
+	// other session.
 	busy := func(m *nats.Msg) { s.replyError(m, 3004) }
-	if _, err := s.natsClient.QueueSubscribe(topic, "diameter-gw", s.inflight.wrap(handler, busy)); err != nil {
+	if _, err := s.natsClient.QueueSubscribe(topic, "diameter-gw", s.inflight.Wrap(handler, busy)); err != nil {
 		logger.Error("Failed to subscribe to Gx reverse topic", err,
 			logger.String("topic", topic),
 			logger.String("cmd", label))

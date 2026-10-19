@@ -189,6 +189,15 @@ func (t *Translator) ToCCAMessage(answer *GyAnswer, req *diam.Message) (*diam.Me
 		ans.AddAVP(charging.WriteFinalUnitIndication(answer.FinalUnitIndication))
 	}
 
+	if si := answer.ServiceInformation; si != nil {
+		a, err := charging.ServiceInformationAVP(si.AVPs)
+		if err != nil {
+			return nil, err
+		}
+		if a != nil {
+			ans.AddAVP(a)
+		}
+	}
 	charging.ApplyCCATail(ans, charging.CCATail{
 		CCSessionFailover:    answer.CCSessionFailover,
 		LowBalanceIndication: answer.LowBalanceIndication,
@@ -328,7 +337,7 @@ func (t *Translator) parseUserEquipmentInfo(a *diam.AVP) *charging.UserEquipment
 
 func (t *Translator) parseServiceInformation(a *diam.AVP) *charging.ServiceInformation {
 	if g, ok := a.Data.(*diam.GroupedAVP); ok {
-		si := &charging.ServiceInformation{}
+		si := &charging.ServiceInformation{AVPs: charging.ReadAVPs(g.AVP)}
 
 		// PS-Information
 		if psAVP := t.findAVPInGrouped(g, avpPSInformation, vendorID3GPP); psAVP != nil {

@@ -124,7 +124,8 @@ func TestApplyCCATail(t *testing.T) {
 // TestReviewFixes: an empty Requested-Service-Unit reads as present; a
 // PS-Furnish-Charging-Information without its mandatory 3GPP-Charging-Id,
 // and a Cost-Information without its Unit-Value, are not sent;
-// 3GPP-Charging-Id carries V only (TS 29.061); PS-Append-Free-Format-Data
+// 3GPP-Charging-Id carries V and M (TS 32.299 §7.2.0: a re-used RADIUS VSA
+// of TS 29.061 takes the M bit); PS-Append-Free-Format-Data
 // absent is not sent (absent means 'Overwrite', 0 'Append').
 func TestReviewFixes(t *testing.T) {
 	m := ReadMSCCs(onWire(t, cc(codeMSCC, group(cc(codeRequestedServiceUnit, group())))).AVP)
@@ -136,7 +137,7 @@ func TestReviewFixes(t *testing.T) {
 
 	a = WriteMSCC(&MSCC{PSFurnishChargingInfo: &PSFurnishChargingInfo{ThreeGPPChargingID: []byte{1}, PSFreeFormatData: []byte{2}}})
 	pf := kids(pick(kids(a), codePSFurnishChargingInfo, vendor3GPP))
-	assert.Equal(t, uint8(avp.Vbit), pick(pf, code3GPPChargingID, vendor3GPP).Flags)
+	assert.Equal(t, uint8(avp.Mbit|avp.Vbit), pick(pf, code3GPPChargingID, vendor3GPP).Flags)
 	assert.Nil(t, pick(pf, codePSAppendFreeFormat, vendor3GPP))
 
 	msg := diam.NewMessage(272, 0, 4, 1, 2, dict.Default)

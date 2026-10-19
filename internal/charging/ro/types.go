@@ -45,6 +45,11 @@ type RoEvent struct {
 
 // RoServiceInformation contains service-specific information for Ro
 type RoServiceInformation struct {
+	// AVPs is the whole Service-Information: in a CCR every child as
+	// received, at every depth; in a CCA what the gateway sends (the typed
+	// fields below are read from a CCR only).
+	AVPs []charging.AVP `json:"avps,omitempty"`
+
 	IMSInformation *IMSInformation `json:"ims_information,omitempty"`
 }
 
@@ -231,6 +236,9 @@ type RoAnswer struct {
 	LowBalanceIndication *uint32                   `json:"low_balance_indication,omitempty"` // NOT-APPLICABLE (0) counts
 	CostInformation      *charging.CostInformation `json:"cost_information,omitempty"`
 	RemainingBalance     *charging.CCMoney         `json:"remaining_balance,omitempty"`
+
+	// Service-Information (TS 32.299 §6.4.3); only its avps are sent.
+	ServiceInformation *RoServiceInformation `json:"service_information,omitempty"`
 }
 
 // EventType is the Event-Type AVP (823, TS 32.299 §7.2.65): a Grouped AVP

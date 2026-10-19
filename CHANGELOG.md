@@ -9,6 +9,47 @@ describes what changed for an installation of 0.9.4.
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-10-19
+
+Chart 0.3.5 (values and schema unchanged). Gy and Ro pass a CCR's Service-Information whole and
+send one in a CCA; S6a, S6c and SGd requests from an application wait concurrently. Applications
+using Gy or Ro: the 3GPP AVPs of TS 29.061 now have their TS 32.299 names, and
+3GPP-Charging-Id in PS-Furnish-Charging-Information carries the M bit.
+
+### Added
+
+- **Gy and Ro Service-Information whole** (TS 32.299 §7.2.183). A CCR's Service-Information
+  reaches the application as `service_information.avps`: every child at every depth, in order —
+  PS-Information's 74 children and IMS-Information's 53, the groups they hold (QoS-Information,
+  SDP-Media-Component, Service-Data-Container, …) and any other service's group. Each AVP has its
+  `name`, `code`, `vendor_id`, `type` and `value` (string, number, base64 for OctetString,
+  RFC 3339 for Time, the IP address for an IPv4 or IPv6 Address and base64 of family and address
+  for another family), or `avps` for a group; an AVP the dictionary does not know is passed with
+  type `Unknown` and its data in base64. The typed `ps_information` and
+  `ims_information` fields are unchanged.
+- A CCA carries the application's `service_information.avps` (TS 32.299 §6.4.3); an AVP is given
+  by `code` and `vendor_id` or by `name`. A known AVP is written with its dictionary type (a
+  different `type` is refused) and its specification's M bit; an unknown one as an OctetString
+  unless `type` says otherwise, without M. V follows `vendor_id`. An AVP the gateway cannot write
+  fails the CCA, as other invalid replies do.
+
+### Fixed
+
+- The Credit-Control dictionary has every AVP a PS-Information or IMS-Information can carry (325),
+  with the code, type and M bit of TS 32.299 Tables 7.1.0.1, 7.2.0.1, 7.3.1, 7.4.1 and the
+  specifications they refer to: 78 decoded as Unknown (TWAG-Address,
+  RAN-Secondary-RAT-Usage-Report, Serving-PLMN-Rate-Control, Cellular-Network-Information, …), and
+  Application-Service-Provider-Identity decoded as OctetString (TS 29.214 §5.3.29: UTF8String).
+  The types of SSID, 3GPP2-BSID, Logical-Access-ID and Physical-Access-ID are not verified (TS
+  29.273, 3GPP2 X.S0057 and ETSI TS 283 034 were not consulted). The 3GPP AVPs of TS 29.061 are
+  named as in TS 32.299 (`3GPP-Charging-Id`, not `TGPP-Charging-Id`).
+- 3GPP-Charging-Id in PS-Furnish-Charging-Information carries the M bit: TS 32.299 §7.2.0 sets it
+  on a RADIUS VSA of TS 29.061 re-used in charging. 0.14.0 sent the V bit only.
+- **S6a, S6c and SGd requests from an application** (`diameter.s6a.{clr,idr,dsr,rsr}`,
+  `diameter.sgd.*.request`): one peer not answering held up every request on the subject for up
+  to the request timeout each. Requests now wait for their peers concurrently, at most 1024 per
+  service at a time; past that, a request is refused with 3004 — as Gx, Gy and Ro since 0.15.0.
+
 ## [0.15.0] — 2026-10-18
 
 Chart 0.3.4 (values and schema unchanged). An OCS can re-authorise or abort a Gy or Ro session
@@ -438,7 +479,8 @@ No change to the gateway's behaviour, configuration or NATS contract.
 See the [README](README.md#known-limitations). New in this release: gateway-initiated requests
 reach directly connected peers only, a consequence of binding identities to connections.
 
-[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.12.0...v0.13.0

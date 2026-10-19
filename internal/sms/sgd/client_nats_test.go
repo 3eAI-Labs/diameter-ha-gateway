@@ -126,3 +126,56 @@ func TestClient_RejectsIncompleteRequests(t *testing.T) {
 		assert.Equal(t, uint32(diam.MissingAVP), ans.ResultCode, "%s: %s", subject, msg.Data)
 	}
 }
+
+// TestClient_SilentPeerDelaysNoOtherRequest: a subscription's callbacks run
+// one at a time; an HSS that does not answer must not hold up an SRR to
+// another HSS until the first one times out.
+func TestClient_SilentPeerDelaysNoOtherRequest(t *testing.T) {
+	url := natstest.Start(t, false)
+	nc, err := internalNats.NewClient(config.NatsConfig{URL: url})
+	require.NoError(t, err)
+	defer nc.Close()
+	cfg := &config.Config{Server: config.ServerConfig{OriginHost: "gw.example", OriginRealm: "example"}}
+	pm := diameter.NewPeerManager()
+	hung, hss := &diamtest.Conn{}, &diamtest.Conn{}
+	pm.Register(hung, "hung.example")
+	pm.Register(hss, "hss.example")
+	c := NewClient(nc, pm, cfg, 5*time.Second)
+	require.NoError(t, c.StartListening())
+	require.NoError(t, nc.Conn.Flush())
+	app, err := nats.Connect(url)
+	require.NoError(t, err)
+	defer app.Close()
+
+	writtenTo := func(conn *diamtest.Conn) *diam.Message {
+		var msgs []*diam.Message
+		require.Eventually(t, func() bool {
+			msgs, _ = conn.Messages()
+			return len(msgs) == 1
+		}, 2*time.Second, 5*time.Millisecond)
+		return msgs[0]
+	}
+	go app.Request(TopicSGdSRRRequest, []byte(`{"msisdn":"905551234567","sc_address":"905309999999","destination_host":"hung.example"}`), 6*time.Second)
+	writtenTo(hung)
+
+	start := time.Now()
+	done := make(chan *nats.Msg, 1)
+	go func() {
+		msg, err := app.Request(TopicSGdSRRRequest, []byte(`{"msisdn":"905551234568","sc_address":"905309999999","destination_host":"hss.example"}`), 6*time.Second)
+		assert.NoError(t, err)
+		done <- msg
+	}()
+	srr := writtenTo(hss)
+	sra := diam.NewMessage(srr.Header.CommandCode, 0, srr.Header.ApplicationID, srr.Header.HopByHopID, srr.Header.EndToEndID, nil)
+	sid, err := srr.FindAVP(avp.SessionID, 0)
+	require.NoError(t, err)
+	sra.AddAVP(sid)
+	sra.NewAVP(avp.ResultCode, avp.Mbit, 0, datatype.Unsigned32(2001))
+	c.HandleSRA(hss, sra)
+	msg := <-done
+	require.NotNil(t, msg)
+	var ans map[string]interface{}
+	require.NoError(t, json.Unmarshal(msg.Data, &ans))
+	assert.EqualValues(t, 2001, ans["result_code"])
+	assert.Less(t, time.Since(start), 2*time.Second, "waited for the silent HSS")
+}
