@@ -89,8 +89,29 @@ func serviceInfoDictXML() string {
 		fmt.Fprintf(&b, "        <avp name=%q code=\"%d\" must=%q may=\"P\" must-not=%q may-encrypt=\"Y\" vendor-id=\"%d\"><data type=%q/></avp>\n",
 			name, a.Code, must, mustNot, a.Vendor, a.Type)
 	}
+	for _, a := range rfc8506Extension {
+		fmt.Fprintf(&b, "        <avp name=%q code=\"%d\" must=\"\" may=\"M\" must-not=\"V\" may-encrypt=\"Y\"><data type=%q/></avp>\n",
+			a.Name, a.Code, a.Type)
+	}
 	b.WriteString("    </application>\n</diameter>\n")
 	return b.String()
+}
+
+// rfc8506Extension is User-Equipment-Info-Extension and its children (RFC
+// 8506 §8.52-§8.57; flags "May M", table §8), which a CCR may carry and
+// go-diameter v4 lacks; Gx looks them up here too. Without them a CCR
+// carrying one with the M bit was answered 5001 (RFC 6733 §4.1).
+var rfc8506Extension = []struct {
+	Name string
+	Code uint32
+	Type string
+}{
+	{"User-Equipment-Info-Extension", 653, "Grouped"},
+	{"User-Equipment-Info-IMEISV", 654, "OctetString"},
+	{"User-Equipment-Info-MAC", 655, "OctetString"},
+	{"User-Equipment-Info-EUI64", 656, "OctetString"},
+	{"User-Equipment-Info-ModifiedEUI64", 657, "OctetString"},
+	{"User-Equipment-Info-IMEI", 658, "OctetString"},
 }
 
 func init() {

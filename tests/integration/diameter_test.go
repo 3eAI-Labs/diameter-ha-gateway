@@ -88,9 +88,9 @@ func TestDiameterMessages(t *testing.T) {
 			appID:   16777251,
 			avps: []*diam.AVP{
 				diam.NewAVP(avp.UserName, avp.Mbit, 0, datatype.UTF8String("123456789012345")),
-				diam.NewAVP(avp.RATType, avp.Mbit, 0, datatype.Enumerated(1004)),
-				diam.NewAVP(avp.ULRFlags, avp.Mbit, 0, datatype.Unsigned32(1)),
-				diam.NewAVP(avp.VisitedPLMNID, avp.Mbit, 0, datatype.OctetString("28601F")),
+				diam.NewAVP(avp.RATType, avp.Mbit|avp.Vbit, 10415, datatype.Enumerated(1004)),
+				diam.NewAVP(avp.ULRFlags, avp.Mbit|avp.Vbit, 10415, datatype.Unsigned32(1)),
+				diam.NewAVP(avp.VisitedPLMNID, avp.Mbit|avp.Vbit, 10415, datatype.OctetString("28601F")),
 			},
 			expectSuccess:    true,
 			expectResultCode: diam.Success, // 2001
@@ -101,9 +101,9 @@ func TestDiameterMessages(t *testing.T) {
 			appID:   16777252,
 			avps: []*diam.AVP{
 				diam.NewAVP(avp.UserName, avp.Mbit, 0, datatype.UTF8String("123456789012345")),
-				diam.NewAVP(avp.TerminalInformation, avp.Mbit, 0, &diam.GroupedAVP{
+				diam.NewAVP(avp.TerminalInformation, avp.Mbit|avp.Vbit, 10415, &diam.GroupedAVP{
 					AVP: []*diam.AVP{
-						diam.NewAVP(avp.IMEI, avp.Mbit, 0, datatype.UTF8String("35293006225621")),
+						diam.NewAVP(avp.IMEI, avp.Mbit|avp.Vbit, 10415, datatype.UTF8String("35293006225621")),
 					},
 				}),
 			},
@@ -118,9 +118,9 @@ func TestDiameterMessages(t *testing.T) {
 			appID:   16777251,
 			avps: []*diam.AVP{
 				// User-Name is MISSING
-				diam.NewAVP(avp.RATType, avp.Mbit, 0, datatype.Enumerated(1004)),
-				diam.NewAVP(avp.ULRFlags, avp.Mbit, 0, datatype.Unsigned32(1)),
-				diam.NewAVP(avp.VisitedPLMNID, avp.Mbit, 0, datatype.OctetString("28601F")),
+				diam.NewAVP(avp.RATType, avp.Mbit|avp.Vbit, 10415, datatype.Enumerated(1004)),
+				diam.NewAVP(avp.ULRFlags, avp.Mbit|avp.Vbit, 10415, datatype.Unsigned32(1)),
+				diam.NewAVP(avp.VisitedPLMNID, avp.Mbit|avp.Vbit, 10415, datatype.OctetString("28601F")),
 			},
 			expectSuccess:    true,
 			expectResultCode: diam.MissingAVP, // 5005

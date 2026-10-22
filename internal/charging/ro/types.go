@@ -211,12 +211,17 @@ type UnitCost struct {
 
 // RoAnswer represents a Credit-Control-Answer for Ro interface
 type RoAnswer struct {
-	ResultCode        uint32  `json:"result_code"`
-	CCRequestType     uint32  `json:"cc_request_type"`
-	CCRequestNumber   uint32  `json:"cc_request_number"`
-	OriginHost        string  `json:"origin_host,omitempty"`
-	OriginRealm       string  `json:"origin_realm,omitempty"`
-	CCSessionFailover *uint32 `json:"cc_session_failover,omitempty"` // FAILOVER_NOT_SUPPORTED (0) counts
+	ResultCode uint32 `json:"result_code"`
+	// ExperimentalResultCode is a 3GPP result, sent in Experimental-Result
+	// (TS 32.299 §7.1.8A), e.g. 5011 when a feature of the request's
+	// Supported-Features is not supported (§6.5.10). With result_code 0
+	// the CCA carries Experimental-Result alone.
+	ExperimentalResultCode uint32  `json:"experimental_result_code,omitempty"`
+	CCRequestType          uint32  `json:"cc_request_type"`
+	CCRequestNumber        uint32  `json:"cc_request_number"`
+	OriginHost             string  `json:"origin_host,omitempty"`
+	OriginRealm            string  `json:"origin_realm,omitempty"`
+	CCSessionFailover      *uint32 `json:"cc_session_failover,omitempty"` // FAILOVER_NOT_SUPPORTED (0) counts
 
 	// Credit Control
 	MSCC []charging.MSCC `json:"mscc,omitempty"`

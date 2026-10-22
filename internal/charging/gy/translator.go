@@ -160,7 +160,7 @@ func (t *Translator) ToCCREvent(m *diam.Message, traceID string) (*GyEvent, erro
 
 // ToCCAMessage converts a GyAnswer to a Diameter CCA message
 func (t *Translator) ToCCAMessage(answer *GyAnswer, req *diam.Message) (*diam.Message, error) {
-	ans := req.Answer(answer.ResultCode)
+	ans := charging.AnswerFor(req, answer.ResultCode, answer.ExperimentalResultCode)
 
 	// Add CC-Request-Type and Number (echo from request)
 	ans.NewAVP(avpCCRequestType, avp.Mbit, 0, datatype.Enumerated(answer.CCRequestType))

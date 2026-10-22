@@ -164,22 +164,27 @@ func (s *CCReverseService) send(msg *nats.Msg, cmd string, h charging.DiameterHe
 	}
 	s.pending[key] = &ccPending{ch: ch, conn: conn, peerHost: destHost, code: m.Header.CommandCode, hopByHop: m.Header.HopByHopID}
 	s.mu.Unlock()
-	defer s.remove(key)
+	a := s.exchange(conn, m, ch)
+	// Removed before the reply: an application retrying as soon as it is
+	// answered is not refused 3004 by the request it retries.
+	s.remove(key)
+	s.reply(msg, a)
+}
 
+// exchange writes m on conn and waits for its answer on ch.
+func (s *CCReverseService) exchange(conn diam.Conn, m *diam.Message, ch <-chan *diam.Message) charging.AbortAnswer {
 	if _, err := m.WriteTo(conn); err != nil {
-		s.reply(msg, charging.AbortAnswer{ResultCode: diam.UnableToDeliver, ErrorMessage: "request write failed"})
-		return
+		return charging.AbortAnswer{ResultCode: diam.UnableToDeliver, ErrorMessage: "request write failed"}
 	}
 	select {
 	case ans := <-ch:
 		if ans == nil {
-			s.reply(msg, charging.AbortAnswer{ResultCode: diam.UnableToDeliver, ErrorMessage: "client disconnected"})
-			return
+			return charging.AbortAnswer{ResultCode: diam.UnableToDeliver, ErrorMessage: "client disconnected"}
 		}
 		rc, exp := diameter.AnswerResult(ans)
-		s.reply(msg, charging.ReadAbortAnswer(ans, rc, exp))
+		return charging.ReadAbortAnswer(ans, rc, exp)
 	case <-time.After(s.timeout()):
-		s.reply(msg, charging.AbortAnswer{ResultCode: diam.UnableToDeliver, ErrorMessage: "no answer from client"})
+		return charging.AbortAnswer{ResultCode: diam.UnableToDeliver, ErrorMessage: "no answer from client"}
 	}
 }
 

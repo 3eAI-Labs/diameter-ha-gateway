@@ -144,3 +144,31 @@ func TestReviewFixes(t *testing.T) {
 	ApplyCCATail(msg, CCATail{CostInformation: &CostInformation{CurrencyCode: 949}})
 	assert.Nil(t, pick(msg.AVP, codeCostInformation, 0))
 }
+
+// TestAnswerFor: a CCA carries Result-Code (TS 32.299 §6.4.3) and, when
+// set, a 3GPP Experimental-Result (§7.1.8A, 5011 for §6.5.10); with
+// Result-Code 0 the Experimental-Result alone (RFC 6733 §7.6).
+func TestAnswerFor(t *testing.T) {
+	req := diam.NewMessage(272, diam.RequestFlag, 4, 1, 2, dict.Default)
+	expOf := func(m *diam.Message) (uint32, uint32) {
+		e := pick(m.AVP, avp.ExperimentalResult, 0)
+		if e == nil {
+			return 0, 0
+		}
+		return u32(pick(kids(e), avp.VendorID, 0)), u32(pick(kids(e), avp.ExperimentalResultCode, 0))
+	}
+
+	m := onWire(t, AnswerFor(req, 5001, 5011).AVP...)
+	assert.Equal(t, p32(5001), u32p(pick(m.AVP, avp.ResultCode, 0)))
+	v, c := expOf(m)
+	assert.Equal(t, [2]uint32{vendor3GPP, 5011}, [2]uint32{v, c})
+
+	m = onWire(t, AnswerFor(req, 0, 5011).AVP...)
+	assert.Nil(t, pick(m.AVP, avp.ResultCode, 0))
+	_, c = expOf(m)
+	assert.Equal(t, uint32(5011), c)
+
+	m = onWire(t, AnswerFor(req, 2001, 0).AVP...)
+	assert.Equal(t, p32(2001), u32p(pick(m.AVP, avp.ResultCode, 0)))
+	assert.Nil(t, pick(m.AVP, avp.ExperimentalResult, 0))
+}

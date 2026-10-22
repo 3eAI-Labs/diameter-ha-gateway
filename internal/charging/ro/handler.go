@@ -139,7 +139,9 @@ func (h *Handler) HandleCCR(c diam.Conn, m *diam.Message) {
 	// Metrics
 	duration := time.Since(startTime)
 	resultStr := "success"
-	if answer.ResultCode != diam.Success {
+	if answer.ExperimentalResultCode != 0 {
+		resultStr = fmt.Sprintf("%d", answer.ExperimentalResultCode)
+	} else if answer.ResultCode != diam.Success {
 		resultStr = fmt.Sprintf("%d", answer.ResultCode)
 	}
 
@@ -150,6 +152,7 @@ func (h *Handler) HandleCCR(c diam.Conn, m *diam.Message) {
 		logger.String("trace_id", traceID),
 		logger.String("cc_type", ccTypeName),
 		logger.Int("result_code", int(answer.ResultCode)),
+		logger.Int("experimental_result_code", int(answer.ExperimentalResultCode)),
 		logger.String("duration", duration.String()),
 	)
 }

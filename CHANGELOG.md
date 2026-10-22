@@ -9,6 +9,44 @@ describes what changed for an installation of 0.9.4.
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-10-22
+
+Chart 0.3.6 (values and schema unchanged). Gy and Ro CCAs can carry a 3GPP Experimental-Result;
+a request with an unknown mandatory AVP is answered 5001. Peers that send 3GPP AVPs with the M
+bit but without their vendor are now rejected: check a client before upgrading.
+
+### Added
+
+- **Gy and Ro CCA Experimental-Result** (TS 32.299 §7.1.8A). `experimental_result_code` puts a
+  3GPP Experimental-Result in the CCA, beside Result-Code (mandatory in the §6.4.3 ABNF) or, with
+  `result_code` 0, alone. An OCS can answer the Supported-Features mechanism (§6.5.10) with 5011
+  DIAMETER_ERROR_FEATURE_UNSUPPORTED and its features, in the CCA's `service_information.avps`;
+  the request's Supported-Features reaches it in the CCR's.
+
+### Changed
+
+- **A request with an unknown mandatory AVP is answered 5001** DIAMETER_AVP_UNSUPPORTED, with a
+  Failed-AVP holding it, before any application sees it (RFC 6733 §4.1, §7.1.5): a top-level AVP
+  that has the M bit and that the gateway's dictionary does not know, in an application the
+  gateway handles (a request of another is answered 3001 or 3007 as before). One inside a Grouped
+  AVP, or without the M bit, is passed on as before. Before, such a request was handled and the AVP
+  dropped. A peer that sends a 3GPP AVP with the M bit but without its vendor (V bit and Vendor-Id
+  10415) is now answered 5001; the integration test's ULR and ECR did.
+
+### Fixed
+
+- The dictionaries have every AVP the requests the gateway receives may carry at top level, per
+  their command ABNF; a test checks all 229. Added: in S6a, Supported-Services (ULR),
+  Monitoring-Event-Config-Status and Emergency-Services (NOR) with their children (TS 29.336
+  Table 8.4.1, TS 29.230); in Gx, 3GPP-SGSN/GGSN-IPv6-Address, TWAN-Identifier, QoS-Rule-Report,
+  Session-Linking-Indicator, ADC-Rule-Report, Trace-Data, Trace-Reference, AN-Trusted,
+  Origination-Time-Stamp, Maximum-Wait-Time and CS-Service-QoS-Request-Identifier/-Operation (TS
+  29.212 Tables 5.3.0.2, 5a.3.1, 5b.3.1, Annex E.6.3; TS 29.230 Table 7.1); in Gx, Gy and Ro, User-Equipment-Info-Extension and its children (RFC 8506 §8.52-§8.57).
+  These are decoded; they are not yet passed to Gx or S6a applications.
+- A Gy or Ro RAR or ASR from an application is no longer refused 3004 when sent as soon as the
+  previous one for the session is answered: the gateway forgot the previous request after
+  answering it, not before (since 0.15.0).
+
 ## [0.16.0] — 2026-10-19
 
 Chart 0.3.5 (values and schema unchanged). Gy and Ro pass a CCR's Service-Information whole and
@@ -479,7 +517,8 @@ No change to the gateway's behaviour, configuration or NATS contract.
 See the [README](README.md#known-limitations). New in this release: gateway-initiated requests
 reach directly connected peers only, a consequence of binding identities to connections.
 
-[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/3eAI-Labs/diameter-ha-gateway/compare/v0.13.0...v0.14.0

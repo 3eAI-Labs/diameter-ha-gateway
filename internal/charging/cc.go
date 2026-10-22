@@ -595,6 +595,20 @@ func ApplyCCATail(ans *diam.Message, t CCATail) {
 	}
 }
 
+// AnswerFor opens a CCA: Result-Code, which TS 32.299 §6.4.3 makes
+// mandatory, and an Experimental-Result of 3GPP when experimentalCode is
+// set (§7.1.8A: 5011 DIAMETER_ERROR_FEATURE_UNSUPPORTED, §6.5.10). With
+// resultCode 0 only the Experimental-Result is sent (RFC 6733 §7.6).
+func AnswerFor(req *diam.Message, resultCode, experimentalCode uint32) *diam.Message {
+	ans := req.Answer(resultCode) // Answer(0) adds no Result-Code
+	if experimentalCode != 0 {
+		ans.AddAVP(diam.NewAVP(avp.ExperimentalResult, avp.Mbit, 0, group(
+			diam.NewAVP(avp.VendorID, avp.Mbit, 0, datatype.Unsigned32(vendor3GPP)),
+			diam.NewAVP(avp.ExperimentalResultCode, avp.Mbit, 0, datatype.Unsigned32(experimentalCode)))))
+	}
+	return ans
+}
+
 // U32 and U64 read an integer AVP whatever its integer type; nil or
 // another type reads as 0. Gy and Ro use them so a CCR's AVP of an
 // unexpected type cannot panic the handler.

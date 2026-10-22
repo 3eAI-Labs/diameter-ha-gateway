@@ -269,6 +269,21 @@ func (s *DiameterServer) Start(ctx context.Context) error {
 	return diam.ListenAndServeNetwork(s.cfg.Server.Network, s.cfg.Server.ListenAddr, s.gate(), nil)
 }
 
+// serves reports whether the gateway handles requests of the application:
+// the base protocol, S6a and S13 always; Gx, Gy and Ro with charging; S6c
+// and SGd with SGd.
+func (s *DiameterServer) serves(appID uint32) bool {
+	switch appID {
+	case 0, 16777251, 16777252:
+		return true
+	case ccApplicationID, gxApplicationID:
+		return s.chargingHandler != nil
+	case 16777312, 16777313:
+		return s.sgdHandler != nil || s.sgdAnswerHandler != nil
+	}
+	return false
+}
+
 // gate puts peer authorisation and panic recovery in front of the state
 // machine (peer_gate.go).
 func (s *DiameterServer) gate() *peerGate {
@@ -280,8 +295,13 @@ func (s *DiameterServer) gate() *peerGate {
 				s.peerManager.Register(c, originHost)
 			}
 		},
-		answer: func(c diam.Conn, m *diam.Message, resultCode uint32) {
-			a := CompleteAnswer(m.Answer(resultCode), m, s.cfg.Server.OriginHost, s.cfg.Server.OriginRealm)
+		serves: s.serves,
+		answer: func(c diam.Conn, m *diam.Message, resultCode uint32, extra ...*diam.AVP) {
+			a := m.Answer(resultCode)
+			for _, x := range extra {
+				a.AddAVP(x)
+			}
+			a = CompleteAnswer(a, m, s.cfg.Server.OriginHost, s.cfg.Server.OriginRealm)
 			if _, err := a.WriteTo(c); err != nil {
 				logger.Warn("answer write failed", logger.String("err", err.Error()))
 			}

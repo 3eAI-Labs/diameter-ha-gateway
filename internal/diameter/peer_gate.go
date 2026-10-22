@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/3eAI-Labs/diameter-ha-gateway/internal/platform/logger"
 	"github.com/3eAI-Labs/diameter-ha-gateway/internal/platform/monitor"
 	"github.com/fiorix/go-diameter/v4/diam"
+	"github.com/fiorix/go-diameter/v4/diam/avp"
+	"github.com/fiorix/go-diameter/v4/diam/datatype"
 	"github.com/fiorix/go-diameter/v4/diam/sm/smpeer"
 )
 
@@ -32,7 +35,11 @@ type peerGate struct {
 	next      diam.Handler
 	authorize func(c diam.Conn, m *diam.Message) (originHost string, ok bool)
 	register  func(c diam.Conn, originHost string)
-	answer    func(c diam.Conn, m *diam.Message, resultCode uint32)
+	answer    func(c diam.Conn, m *diam.Message, resultCode uint32, extra ...*diam.AVP)
+	// serves reports the applications the gateway handles; a request of
+	// another is left to the state machine, which answers it 3001 or 3007.
+	// Nil serves every application.
+	serves func(appID uint32) bool
 }
 
 func (g *peerGate) ServeDIAM(c diam.Conn, m *diam.Message) {
@@ -49,7 +56,47 @@ func (g *peerGate) ServeDIAM(c diam.Conn, m *diam.Message) {
 		}
 		return
 	}
+	if m.Header.CommandFlags&diam.RequestFlag != 0 && handshakeDone(c) &&
+		(g.serves == nil || g.serves(m.Header.ApplicationID)) {
+		if failed := unknownMandatory(m); len(failed) > 0 {
+			g.rejectUnknown(c, m, failed)
+			return
+		}
+	}
 	g.next.ServeDIAM(c, m)
+}
+
+// unknownMandatory returns the request's top-level AVPs that carry the M
+// bit and that the dictionary does not know. RFC 6733 §4.1: "The receiving
+// entity MUST return an appropriate error message if it receives an AVP
+// that has the M-bit set but does not understand it. An exception applies
+// when the AVP is embedded within a Grouped AVP."
+func unknownMandatory(m *diam.Message) []*diam.AVP {
+	var out []*diam.AVP
+	for _, a := range m.AVP {
+		if _, unknown := a.Data.(datatype.Unknown); unknown && a.Flags&avp.Mbit != 0 {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// rejectUnknown answers 5001 DIAMETER_AVP_UNSUPPORTED with a Failed-AVP
+// holding the offending AVPs (RFC 6733 §7.1.5, §7.5), before any handler
+// or application sees the request. It logs their codes, never values.
+func (g *peerGate) rejectUnknown(c diam.Conn, m *diam.Message, failed []*diam.AVP) {
+	codes := make([]string, 0, len(failed))
+	for _, a := range failed {
+		codes = append(codes, fmt.Sprintf("%d/%d", a.Code, a.VendorID))
+	}
+	command := strconv.FormatUint(uint64(m.Header.CommandCode), 10)
+	logger.Warn("Request with an unknown mandatory AVP answered 5001",
+		logger.String("command_code", command),
+		logger.String("application_id", strconv.FormatUint(uint64(m.Header.ApplicationID), 10)),
+		logger.String("avps", strings.Join(codes, ",")))
+	monitor.IncrementCounter("diameter_avp_unsupported_total", map[string]string{"command_code": command})
+	g.answer(c, m, diam.AVPUnsupported,
+		diam.NewAVP(avp.FailedAVP, avp.Mbit, 0, &diam.GroupedAVP{AVP: failed}))
 }
 
 // Error forwards the listener's read errors to the state machine, which the

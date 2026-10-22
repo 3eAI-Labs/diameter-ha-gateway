@@ -63,9 +63,8 @@ type reusedAVP struct {
 	Table72 bool
 }
 
-// reused29272 lists the re-used vendor-10415 AVPs the gateway writes. Table
-// 7.3.1/2 gives SCEF-ID's M-bit but not its code, which is not checked
-// against TS 29.336.
+// reused29272 lists the re-used vendor-10415 AVPs the gateway writes or
+// reads. The TS 29.336 codes are checked against its Table 8.4.1.
 var reused29272 = map[uint32]reusedAVP{
 	13:   {"3GPP-Charging-Characteristics", "TS 29.061", true, false},
 	515:  {"Max-Requested-Bandwidth-DL", "TS 29.214", true, false},
@@ -92,6 +91,18 @@ var reused29272 = map[uint32]reusedAVP{
 	2405: {"GMLC-Address", "TS 29.173", false, true},
 
 	3125: {"SCEF-ID", "TS 29.336", false, true},
+	// Read from a ULR and a NOR (dict_extensions_29336.go); Table 7.3.1/2:
+	// "Must not set". Their children are TS 29.336's, M per its Table 8.4.1.
+	3124: {"SCEF-Reference-ID", "TS 29.336", false, true},
+	3142: {"Monitoring-Event-Config-Status", "TS 29.336", false, true},
+	3143: {"Supported-Services", "TS 29.336", false, true},
+	3144: {"Supported-Monitoring-Events", "TS 29.336", false, true},
+	3146: {"Service-Result", "TS 29.336", false, false},
+	3147: {"Service-Result-Code", "TS 29.336", false, false},
+	3152: {"Service-Report", "TS 29.336", false, false},
+	3153: {"Node-Type", "TS 29.336", false, false},
+	3186: {"SCEF-Reference-ID-Ext", "TS 29.336", false, false},
+	1538: {"Emergency-Services", "TS 29.273", false, false}, // Table 7.3.1/2 gives no M-bit rule
 
 	3701: {"ProSe-Subscription-Data", "TS 29.344", false, true},
 	3702: {"ProSe-Permission", "TS 29.344", true, false},

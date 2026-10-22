@@ -527,3 +527,48 @@ func TestServiceInformation_Whole(t *testing.T) {
 	_, err = tr.ToCCAMessage(&answer, req)
 	assert.Error(t, err, "an AVP the gateway cannot write is not dropped silently")
 }
+
+// TestSupportedFeatures: TS 32.299 §6.5.10 — the CCR's Supported-Features
+// (in PS-Information, L9315) reaches the OCS; the OCS that does not support
+// a feature answers DIAMETER_ERROR_FEATURE_UNSUPPORTED (5011) with the
+// features it supports, in the CCA's PS-Information.
+func TestSupportedFeatures(t *testing.T) {
+	tr := NewTranslator()
+	req := buildTestCCR(t, charging.CCRequestTypeInitial, 0)
+	req.NewAVP(873, avp.Mbit|avp.Vbit, 10415, &diam.GroupedAVP{AVP: []*diam.AVP{
+		diam.NewAVP(874, avp.Mbit|avp.Vbit, 10415, &diam.GroupedAVP{AVP: []*diam.AVP{
+			diam.NewAVP(628, avp.Vbit, 10415, &diam.GroupedAVP{AVP: []*diam.AVP{
+				diam.NewAVP(avp.VendorID, avp.Mbit, 0, datatype.Unsigned32(10415)),
+				diam.NewAVP(629, avp.Vbit, 10415, datatype.Unsigned32(1)),
+				diam.NewAVP(630, avp.Vbit, 10415, datatype.Unsigned32(3)),
+			}}),
+		}}),
+	}})
+	b, err := req.Serialize()
+	require.NoError(t, err)
+	wire, err := diam.ReadMessage(bytes.NewReader(b), dict.Default)
+	require.NoError(t, err)
+	event, err := tr.ToCCREvent(wire, "t")
+	require.NoError(t, err)
+	j, err := json.Marshal(event.ServiceInformation.AVPs)
+	require.NoError(t, err)
+	assert.Contains(t, string(j), `"name":"Supported-Features"`)
+	assert.Contains(t, string(j), `{"name":"Feature-List","code":630,"vendor_id":10415,"type":"Unsigned32","value":3}`)
+
+	var answer GyAnswer
+	require.NoError(t, json.Unmarshal([]byte(`{"result_code":5001,"experimental_result_code":5011,"service_information":{"avps":[
+		{"name":"PS-Information","avps":[{"name":"Supported-Features","avps":[
+			{"name":"Vendor-Id","value":10415},{"name":"Feature-List-ID","value":1},{"name":"Feature-List","value":1}]}]}]}}`), &answer))
+	cca, err := tr.ToCCAMessage(&answer, req)
+	require.NoError(t, err)
+	b, err = cca.Serialize()
+	require.NoError(t, err)
+	got, err := diam.ReadMessage(bytes.NewReader(b), dict.Default)
+	require.NoError(t, err)
+	exp, err := got.FindAVP(avp.ExperimentalResultCode, 0)
+	require.NoError(t, err)
+	assert.Equal(t, datatype.Unsigned32(5011), exp.Data)
+	sf, err := got.FindAVP(628, 10415)
+	require.NoError(t, err)
+	assert.Equal(t, uint8(avp.Vbit), sf.Flags, "Supported-Features: V, no M (TS 29.229)")
+}
